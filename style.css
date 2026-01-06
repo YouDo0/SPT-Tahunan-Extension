@@ -1,0 +1,78 @@
+#scraper-extension-panel {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 280px;
+    background: #2c3e50;
+    color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    z-index: 99999;
+    font-family: sans-serif;
+    overflow: hidden;
+    border: 1px solid #34495e;
+}
+
+.scraper-header {
+    background: #34495e;
+    padding: 10px 15px;
+    font-weight: bold;
+    text-align: center;
+    border-bottom: 1px solid #465c71;
+}
+
+.scraper-status {
+    padding: 10px 15px;
+    font-size: 13px;
+    text-align: center;
+    background: #2c3e50;
+    word-wrap: break-word;
+}
+
+.scraper-info {
+    padding: 5px 15px;
+    font-size: 12px;
+    text-align: right;
+    color: #bdc3c7;
+    background: #233342;
+}
+
+.scraper-controls {
+    display: flex;
+    padding: 10px;
+    gap: 10px;
+    justify-content: space-between;
+}
+
+.scraper-btn {
+    flex: 1;
+    padding: 8px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+.scraper-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.scraper-btn-start {
+    background-color: #27ae60;
+    color: white;
+}
+
+.scraper-btn-start:hover:not(:disabled) {
+    background-color: #2ecc71;
+}
+
+.scraper-btn-stop {
+    background-color: #c0392b;
+    color: white;
+}
+
+.scraper-btn-stop:hover:not(:disabled) {
+    background-color: #e74c3c;
+}
