@@ -12,12 +12,21 @@
     "default_popup": "popup.html",
     "default_title": "SPT Tahunan Scraper"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "css": ["style.css"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["xlsx.full.min.js"],
+      "matches": ["<all_urls>"]
     }
   ]
 }
