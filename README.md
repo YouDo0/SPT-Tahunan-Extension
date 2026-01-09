@@ -1,9 +1,10 @@
 # SPT Tahunan Scraper Extension
 
-Otomasi pengambilan data dari tabel PrimeNG dengan kontrol melalui popup extension.
+Otomasi pengambilan data dari tabel ke-5 (index 4) pada halaman web dengan kontrol melalui popup extension.
 
 ## 📋 Fitur Utama
 
+✅ **Simple & Direct** - Ambil data langsung dari tabel index 4 tanpa matching header  
 ✅ **Async/Await Processing** - Operasi non-blocking untuk scraping yang efisien  
 ✅ **Popup Control** - Mulai dan hentikan scraping dari popup extension  
 ✅ **Auto-Export** - Eksport otomatis ke file Excel dengan format XLSX  
@@ -15,141 +16,147 @@ Otomasi pengambilan data dari tabel PrimeNG dengan kontrol melalui popup extensi
 ## 🏗️ Struktur Extension
 
 ```
-SPT Tahunan/
+SPT-Tahunan-Extension/
 ├── manifest.json      # Konfigurasi extension
-├── popup.html        # UI popup extension
-├── popup.js          # Logic kontrol dari popup (async)
-├── content.js        # Script yang berjalan di halaman web
-├── style.css         # Styling untuk komponen di halaman
-└── README.md         # File dokumentasi ini
+├── popup.html         # UI popup extension
+├── popup.js           # Logic kontrol dari popup (async)
+├── content.js         # Script yang berjalan di halaman web
+├── style.css          # Styling untuk komponen
+├── background.js      # Background service worker untuk export
+├── xlsx.full.min.js   # Local XLSX library
+└── README.md          # File dokumentasi ini
 ```
 
 ## 🚀 Cara Kerja
 
 ### 1. **Inisialisasi Extension**
 - Content script (`content.js`) berjalan di setiap halaman
-- Mendengarkan pesan dari popup extension melalui `chrome.runtime.onMessage`
+- Mendengarkan pesan dari popup extension
 
-### 2. **Mulai Scraping dari Popup**
-```javascript
+### 2. **User Klik "Start Scraping"**
+```
 1. User klik tombol "Start Scraping" di popup
 2. Popup mengirim pesan START_SCRAPING ke content script
-3. Content script menjalankan async function startScraping()
-4. Popup menerima response dan update status
+3. Content script scan semua tabel di halaman
+4. Validasi: pastikan ada minimal 5 tabel
+5. Otomatis select tabel ke-5 (index 4)
+6. Ekstrak headers + semua data dari tabel tersebut
+7. Export ke Excel
 ```
 
-### 3. **Proses Scraping Async**
+### 3. **Proses Scraping**
 ```javascript
-// Menggunakan async/await untuk kontrol flow
-await loadScript(url)           // Load library Excel
-await sleep(delay)              // Wait dengan settimeout
-while (!stopRequested) {        // Loop async
-    // Scrape data halaman saat ini
-    // Tunggu loading selesai
-    // Klik tombol next halaman
-}
-exportToExcel(headers, data)    // Export hasil
+// Workflow utama
+const allTables = analyzeTables();     // Scan semua tabel
+if (allTables.length < 5) error();     // Validasi minimal 5 tabel
+const table = allTables[4];            // Select tabel index 4
+const headers = extract(table.thead);  // Ambil headers
+const data = extract(table.tbody);     // Ambil semua data
+exportToExcel(headers, data);          // Export hasil
 ```
 
-### 4. **Stop Scraping**
-- User dapat menghentikan scraping kapan saja
+### 4. **Pagination Handling**
+- Script otomatis klik tombol "Next" untuk halaman berikutnya
+- Tunggu data ter-load dengan delay configurable
+- Lanjutkan scrape sampai semua data terkumpul
+
+### 5. **Stop Scraping**
+- User dapat menghentikan kapan saja
 - Data yang sudah terkumpul tetap di-export
 
 ## ⚙️ Pengaturan
 
 ### Dalam Popup:
-- **Auto Export** - Checkbox untuk mengaktifkan/nonaktifkan auto-export ke Excel
-- **Delay (ms)** - Jeda waktu antar aksi scraping (default: 500ms)
+- **Auto Export** - Checkbox untuk auto-export ke Excel (default: ON)
+- **Delay (ms)** - Jeda antar aksi scraping (default: 500ms, range: 200-2000ms)
 
-Settings disimpan di `chrome.storage.local` dan otomatis di-load saat popup dibuka.
+Settings disimpan di `chrome.storage.local`.
+
+## 🔑 Poin Penting
+
+### Syarat Halaman:
+- Halaman harus memiliki **minimal 5 tabel**
+- Tabel index 4 (tabel ke-5) adalah tabel target
+- Setiap tabel harus memiliki `<thead>` untuk headers dan `<tbody>` untuk data
+
+### Proses Simplifikasi:
+- ❌ TIDAK ada matching header kolom
+- ❌ TIDAK ada hardcoded selectors
+- ✅ Cukup ambil tabel di posisi ke-5
+- ✅ Extract semua headers + rows dari tabel tersebut
+- ✅ Bersihkan whitespace dan label otomatis
+
+### Error Handling:
+- Jika halaman punya < 5 tabel → Error: "Need at least 5 tables..."
+- Jika tabel tidak punya tbody → Warning dan skip
+- Jika export gagal → Fallback ke export binary
 
 ## 🔧 Teknologi
 
-- **Chrome Extension Manifest v3** - Latest Chrome extension API
+- **Chrome Extension Manifest v3** - Latest standard
 - **Async/Await** - Modern JavaScript async processing
-- **Chrome Storage API** - Persistent settings storage
-- **SheetJS (XLSX)** - Export ke format Excel
-- **Chrome Messaging API** - Komunikasi popup ↔ content script
+- **Chrome Storage API** - Persistent settings
+- **SheetJS (XLSX)** - Export ke Excel format
+- **Chrome Messaging API** - Komunikasi antar scripts
 
 ## 📝 Log Console
 
-Content script mengirim log ke browser console dengan format:
+Content script mengirim log ke browser console:
 ```
-[Scraper] INFO: Loading Excel library...
-[Scraper] SUCCESS: Excel library loaded successfully
-[Scraper] ERROR: Failed to load Excel library
-```
-
-## 🔍 Selector Reference
-
-Selectors yang digunakan untuk scraping (dapat disesuaikan di content.js):
-
-```javascript
-const tableId = '#pr_id_67-table';              // ID table PrimeNG
-const nextButtonSelector = '#pr_id_67 > p-paginator > div > button.p-paginator-next';
+[Scraper] INFO: Found 8 total tables on page
+[Scraper] INFO: Selected table index 4 (5th table): Product Details → ...
+[Scraper] INFO: Processing 50 rows on page 1
+[Scraper] SUCCESS: Scraping completed!
 ```
 
-## ✅ Checklist Implementasi
+## ✅ Checklist Fitur
 
-- [x] Popup UI dengan styling modern
-- [x] Async/await untuk semua operasi
-- [x] Message passing popup ↔ content script
-- [x] Auto-export ke Excel dengan timestamp
-- [x] Settings persistence dengan Chrome Storage
-- [x] Real-time status updates
-- [x] Error handling yang baik
+- [x] Auto-select tabel index 4 (tidak perlu manual selection)
+- [x] Simplifikasi: lepas header matching complexity
+- [x] Popup UI minimal dengan Start/Stop buttons
+- [x] Settings untuk delay dan auto-export
+- [x] Pagination handling otomatis
+- [x] Data cleaning (whitespace, labels)
+- [x] Auto-export ke XLSX dengan timestamp
+- [x] Real-time status display
+- [x] Error handling yang robust
 - [x] Console logging untuk debugging
-- [x] Kompatibel dengan Manifest v3
 
 ## 🐛 Troubleshooting
 
-### Extension tidak muncul di popup
-- Pastikan manifest.json memiliki action config dengan default_popup
-- Reload extension di `chrome://extensions`
+### Extension tidak berjalan
+1. Buka browser console: `F12 → Console`
+2. Cari log `[Scraper]` untuk melihat status
+3. Pastikan halaman punya minimal 5 tabel
 
-### Scraping tidak berjalan
-- Buka browser console (F12)
-- Lihat log dari content script
-- Pastikan Anda berada di halaman dengan tabel PrimeNG
-- Update selector tableId dan nextButtonSelector jika diperlukan
+### "Need at least 5 tables" error
+- Halaman harus memiliki minimal 5 elemen `<table>`
+- Check page dengan F12 → Elements dan cari `<table>` tags
 
-### Data tidak ter-export
-- Pastikan checkbox "Auto Export" diaktifkan
-- Cek setting delay tidak terlalu kecil
-- Pastikan browser mengizinkan download file
+### Scraping hanya ambil data kosong
+- Pastikan tabel index 4 punya data di `<tbody>`
+- Cek format tabel: harus punya `<thead>` dan `<tbody>`
 
-## 📦 Download File
+### Export tidak trigger
+- Pastikan "Auto Export" checkbox enabled
+- Cek download folder browser
+- Pastikan browser izin download
 
-File Excel yang di-export memiliki format nama:
+## 📦 Output File
+
+Excel file diberi nama dengan format:
 ```
 SPT_Tahunan_YYYY-MM-DD_HH-mm-ss.xlsx
 ```
 
-Contoh: `SPT_Tahunan_2024-01-06_14-30-45.xlsx`
+Contoh: `SPT_Tahunan_2024-01-09_14-30-45.xlsx`
 
-## 🎨 Komponen UI
+## 📄 Dokumentasi Lengkap
 
-### Popup UI:
-- Header dengan judul dan deskripsi
-- Status Box dengan indikator loading/success/error
-- Info Text untuk pesan detail
-- Button Group untuk kontrol Start/Stop
-- Counter untuk menampilkan jumlah rows
-- Settings untuk konfigurasi
-- Footer dengan versi
-
-### Color Scheme:
-- Primary: `#667eea` - `#764ba2` (gradient)
-- Success: `#4CAF50`
-- Error: `#f44336`
-- Info: `#2196F3`
-
-## 📞 Support
-
-Untuk support lebih lanjut, cek console browser untuk debug messages.
+Untuk dokumentasi teknis detail, baca [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-**Version:** 1.0  
-**Last Updated:** January 2025  
+**Version:** 2.0  
+**Last Updated:** January 2026  
 **Status:** Production Ready
