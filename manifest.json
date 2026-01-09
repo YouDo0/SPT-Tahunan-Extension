@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SPT Tahunan Scraper",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Scraping tabel PrimeNG ke Excel secara otomatis dengan kontrol dari popup.",
   "permissions": [
     "activeTab",
