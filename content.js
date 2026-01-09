@@ -65,69 +65,102 @@ function analyzeTables() {
     return tableList;
 }
 
-// --- 1. EXPORT FUNCTIONS (Tanpa Library Online) ---
+// ============================================
+// EXPORT FUNCTION - Menggunakan XLSX Library langsung di content script
+// ============================================
 
-// Metode 1: Export menggunakan Background Script + XLSX Library
-async function exportViaBackground(headers, data) {
-    return new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage(
-            {
-                action: 'EXPORT_XLSX',
-                headers: headers,
-                data: data
-            },
-            (response) => {
-                if (chrome.runtime.lastError) {
-                    reject(new Error(chrome.runtime.lastError.message));
-                } else if (response && response.success) {
-                    resolve(true);
-                } else {
-                    reject(new Error(response?.error || 'Export failed'));
-                }
-            }
-        );
-    });
+async function exportToExcel(headers, data) {
+    try {
+        // Validasi XLSX library
+        if (typeof XLSX === 'undefined') {
+            log('XLSX library not found, using fallback CSV export', 'warning');
+            return exportToXLSXBinary(headers, data);
+        }
+
+        log(`Preparing to export ${data.length} rows...`, 'info');
+        console.log('Headers:', headers);
+        console.log('Data sample (first 3 rows):', data.slice(0, 3));
+
+        // Buat workbook dengan headers + data
+        const wsData = [headers, ...data];
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        // Set column width ke 25 untuk readability
+        const wscols = headers.map(() => ({ wch: 25 }));
+        ws['!cols'] = wscols;
+
+        // Add sheet ke workbook
+        XLSX.utils.book_append_sheet(wb, ws, "SPT Tahunan Data");
+
+        // Generate filename dengan timestamp
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
+        const filename = `SPT_Tahunan_${dateStr}_${timeStr}.xlsx`;
+
+        // Download file
+        XLSX.writeFile(wb, filename);
+
+        log(`File downloaded successfully: ${filename}`, 'success');
+        return true;
+
+    } catch (error) {
+        log(`Export error: ${error.message}`, 'error');
+        console.error('Full export error:', error);
+        
+        // Fallback ke CSV binary jika XLSX gagal
+        log('Attempting fallback CSV export...', 'warning');
+        return exportToXLSXBinary(headers, data);
+    }
 }
 
-// Metode 2: Export Pure CSV ke XLSX Binary (tanpa library)
+// Metode 2: Export Pure CSV ke file (Fallback jika XLSX tidak tersedia)
 function exportToXLSXBinary(headers, data) {
-    const escapeCSV = (val) => {
-        val = String(val).trim();
-        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-            return `"${val.replace(/"/g, '""')}"`;
-        }
-        return val;
-    };
+    try {
+        const escapeCSV = (val) => {
+            val = String(val).trim();
+            if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                return `"${val.replace(/"/g, '""')}"`;
+            }
+            return val;
+        };
 
-    // Buat CSV content
-    const csvContent = [
-        headers.map(escapeCSV).join(','),
-        ...data.map(row => row.map(escapeCSV).join(','))
-    ].join('\n');
+        // Buat CSV content
+        const csvContent = [
+            headers.map(escapeCSV).join(','),
+            ...data.map(row => row.map(escapeCSV).join(','))
+        ].join('\n');
 
-    // Gunakan BOM untuk UTF-8 Excel
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8;' 
-    });
-    
-    const dateStr = new Date().toISOString().slice(0, 10);
-    const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
-    const filename = `SPT_Tahunan_${dateStr}_${timeStr}.xlsx`;
+        // Gunakan BOM untuk UTF-8 Excel compatibility
+        const BOM = '\uFEFF';
+        const blob = new Blob([BOM + csvContent], { 
+            type: 'application/vnd.ms-excel;charset=utf-8;'
+        });
+        
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
+        const filename = `SPT_Tahunan_${dateStr}_${timeStr}.csv`;
 
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    log(`File downloaded: ${filename}`, 'success');
-    return true;
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        URL.revokeObjectURL(url);
+        
+        log(`Fallback file downloaded: ${filename}`, 'warning');
+        return true;
+
+    } catch (error) {
+        log(`CSV export failed: ${error.message}`, 'error');
+        return false;
+    }
 }
 
 // --- 2. UTILITY FUNCTIONS ---
@@ -276,6 +309,15 @@ async function startScraping(configData = {}) {
             
             log(`Processing ${rows.length} rows on page ${pageCount}`);
             
+            // Yield ke event loop agar stop button responsive
+            await sleep(0);
+            
+            // Cek apakah user menekan stop button
+            if (stopRequested) {
+                log('Stop requested, breaking loop', 'warning');
+                break;
+            }
+            
             // Loop setiap row dan ekstrak data
             rows.forEach(row => {
                 const rowData = [];
@@ -306,32 +348,30 @@ async function startScraping(configData = {}) {
             log(`Current total rows: ${allData.length}`);
 
             // Cek apakah ada tombol Next untuk pagination
-            // PrimeNG biasanya punya paginator di setelah tabel
-            const paginator = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+            // Gunakan selector yang lebih specific untuk PrimeNG paginator
+            const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
+            const paginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+            const paginator = document.querySelector(paginatorSelector);
+            
+            // Fallback ke selector umum jika specific tidak ditemukan
+            const paginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
                 ?.querySelector('.p-paginator-next');
             
-            if (!paginator || paginator.classList.contains('p-disabled')) {
+            const nextButton = paginator || paginatorFallback;
+            
+            if (!nextButton || nextButton.classList.contains('p-disabled')) {
                 log('No more pages or last page reached', 'success');
                 break;
             }
 
             // Klik tombol Next
             log('Moving to next page...');
-            paginator.click();
+            nextButton.click();
 
-            // Jeda agar UI update
-            await sleep(config.delay);
-            
-            // Loop menunggu sampai halaman benar-benar ter-load
-            let waitCount = 0;
-            const maxWait = 50;
-            while (paginator.classList.contains('p-disabled') === false && waitCount < maxWait) {
-                await sleep(200);
-                waitCount++;
-            }
-            
-            // Tambah delay agar konten benar-benar ter-render
-            await sleep(config.delay);
+            // Delay setelah klik agar halaman load (dikurangi dari 500ms default)
+            // Gunakan 300ms default atau sesuai setting user
+            const pageLoadDelay = Math.min(config.delay, 300);
+            await sleep(pageLoadDelay);
         }
 
         // Ekspor ke Excel jika ada data
@@ -380,25 +420,6 @@ function stopScraping() {
         stopped: true,
         rowCount: 0
     };
-}
-
-async function exportToExcel(headers, data) {
-    try {
-        // Coba gunakan Background Script + Library XLSX dulu
-        log('Attempting to export via background script...', 'info');
-        await exportViaBackground(headers, data);
-        log('File exported successfully via XLSX library', 'success');
-    } catch (error) {
-        // Fallback ke metode binary tanpa library
-        log('Background script unavailable, using binary CSV method...', 'warning');
-        try {
-            exportToXLSXBinary(headers, data);
-            log('File exported as CSV (binary method)', 'success');
-        } catch (fallbackError) {
-            log(`Export failed: ${fallbackError.message}`, 'error');
-            throw fallbackError;
-        }
-    }
 }
 
 // --- 4. MESSAGE LISTENER (untuk komunikasi dari popup) ---
