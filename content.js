@@ -11,48 +11,18 @@ let config = {
 };
 
 // ============================================
-// DYNAMIC TABLE DETECTION SYSTEM
+// TABLE DETECTION SYSTEM
 // ============================================
 
 /**
- * HARDCODED REFERENCE HEADERS
- * Header ini diambil dari tabel PPH Potong/Dipungut
- * Tidak bergantung pada ID tabel yang berubah-ubah
- */
-const REFERENCE_HEADERS = [
-    "TINDAKAN",
-    "NO.",
-    "NAMA PEMOTONG/PEMUNGUT",
-    "NPWPW PEMOTONG/PEMUNGUT",
-    "Jenis Pajak",
-    "DASAR PENGENAAN PAJAK (Rupiah)",
-    "PPH YANG DIPOTONG/DIPUNGUT (Rupiah)",
-    "BUKTI POTONG/SSP/SSPCP - NOMOR",
-    "BUKTI POTONG/SSP/SSPCP - TANGGAL",
-    "Pilih Jenis Pajak"
-];
-
-/**
- * Bandingkan dua array headers - harus persis sama
- */
-function headersMatch(headers1, headers2) {
-    if (!headers1 || !headers2) return false;
-    if (headers1.length !== headers2.length) return false;
-    
-    // Perbandingan case-sensitive dan exact match
-    return headers1.every((header, i) => header === headers2[i]);
-}
-
-/**
  * Analisis semua tabel di halaman
- * Filter hanya tabel yang memiliki header yang SAMA PERSIS dengan REFERENCE_HEADERS (hardcoded)
- * Tidak bergantung pada ID tabel apapun
+ * Scan semua <table> elements dan kembalikan daftar lengkap
  */
 function analyzeTables() {
     const tableList = [];
     const allTables = document.querySelectorAll('table');
     
-    log(`Scanning ${allTables.length} tables for matching headers...`, 'info');
+    log(`Found ${allTables.length} tables on page`, 'info');
     
     allTables.forEach((table, index) => {
         try {
@@ -69,27 +39,24 @@ function analyzeTables() {
                 });
             }
             
-            // FILTER: Hanya include jika header SAMA PERSIS dengan REFERENCE_HEADERS
-            if (headersMatch(headers, REFERENCE_HEADERS)) {
-                // Ambil jumlah rows
-                const tbody = table.querySelector('tbody');
-                const rowCount = tbody ? tbody.querySelectorAll('tr').length : 0;
-                
-                // Generate nama tabel dari header pertama
-                const tableName = headers.slice(0, 3).join(' → ');
-                
-                tableList.push({
-                    index: tableList.length,
-                    domIndex: index,
-                    id: table.id || `table-${index}`,
-                    selector: `table:nth-of-type(${index + 1})`,
-                    headers: headers,
-                    headerPreview: tableName,
-                    rowCount: rowCount,
-                    hasData: rowCount > 0,
-                    element: table
-                });
-            }
+            // Ambil jumlah rows
+            const tbody = table.querySelector('tbody');
+            const rowCount = tbody ? tbody.querySelectorAll('tr').length : 0;
+            
+            // Generate nama tabel dari header pertama (jika ada)
+            const tableName = headers.length > 0 ? headers.slice(0, 3).join(' → ') : `Table ${index + 1}`;
+            
+            tableList.push({
+                index: index,
+                domIndex: index,
+                id: table.id || `table-${index}`,
+                selector: `table:nth-of-type(${index + 1})`,
+                headers: headers,
+                headerPreview: tableName,
+                rowCount: rowCount,
+                hasData: rowCount > 0,
+                element: table
+            });
         } catch (e) {
             console.error('Error analyzing table:', e);
         }
@@ -237,24 +204,24 @@ async function startScraping(configData = {}) {
     // Debug struktur table
     debugTableStructure();
 
-    // AUTOMATIC TABLE DETECTION AND SELECTION
-    // Scan halaman untuk tabel yang match REFERENCE_HEADERS
+    // SIMPLE TABLE SELECTION BY INDEX
+    // Scan semua tabel di halaman
     const allTables = analyzeTables();
-    log(`Found ${allTables.length} tables matching reference headers`, 'info');
+    log(`Found ${allTables.length} total tables on page`, 'info');
     
-    // Validasi: minimal harus ada 5 tabel
+    // Validasi: cek apakah table index 4 (5th table) tersedia
     if (allTables.length < 5) {
-        const errorMsg = `Insufficient matching tables found. Need at least 5 tables, but only found ${allTables.length} table(s).`;
+        const errorMsg = `Need at least 5 tables on page, but only found ${allTables.length} table(s).`;
         log(errorMsg, 'error');
         throw new Error(errorMsg);
     }
     
-    // Auto-select tabel index 4 (5th table, 0-based indexing)
+    // Select table pada index 4 (5th table, 0-based indexing)
     const selectedTable = allTables[4];
     const tableElement = selectedTable.element;
     const tableSelector = selectedTable.selector;
     
-    log(`Auto-selected table index 4 (5th table): ${selectedTable.headerPreview}`, 'info');
+    log(`Selected table index 4 (5th table): ${selectedTable.headerPreview}`, 'info');
     log(`Table has ${selectedTable.rowCount} rows`, 'info');
     
     let allData = [];
@@ -285,9 +252,9 @@ async function startScraping(configData = {}) {
             log(`Headers found: ${headers.length}`, 'success');
             console.log('Headers extracted:', headers);
         } else {
-            log('No proper header found, using reference headers...', 'warning');
-            headers = selectedTable.headers;
-            log(`Using reference headers: ${headers.length}`, 'warning');
+            log('No proper header found, using empty headers...', 'warning');
+            headers = [];
+            log(`Using empty headers`, 'warning');
         }
 
         // Looping Halaman (async)
