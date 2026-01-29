@@ -172,19 +172,71 @@ function log(message, type = 'info') {
     console.log(`[Scraper] ${type.toUpperCase()}: ${message}`);
 }
 
+/**
+ * Parse Indonesian currency format to number
+ * Handles formats like: "1.000.000,00", "Rp 1.000.000,00", "1.000.000"
+ * @param {string} value - Currency string to parse
+ * @returns {number|string} - Parsed number or original string if not a currency
+ */
+function parseCurrency(value) {
+    if (!value || typeof value !== 'string') {
+        return value;
+    }
+
+    const trimmed = value.trim();
+
+    // Check if it looks like a currency (contains digits and separators)
+    const currencyPattern = /^Rp\s*[\d\.\,]+|[\d\.\,]+$/;
+    if (!currencyPattern.test(trimmed)) {
+        return trimmed;
+    }
+
+    try {
+        // Remove "Rp" prefix and whitespace
+        let cleaned = trimmed.replace(/^Rp\s*/i, '');
+
+        // Remove thousand separators (dots)
+        cleaned = cleaned.replace(/\./g, '');
+
+        // Replace decimal separator (comma) with dot
+        cleaned = cleaned.replace(/,/g, '.');
+
+        // Parse as number
+        const num = parseFloat(cleaned);
+
+        // Return 0 if NaN, otherwise return the number
+        return isNaN(num) ? trimmed : num;
+    } catch (e) {
+        return trimmed;
+    }
+}
+
+/**
+ * Check if a column name is a currency column that should be converted
+ * @param {string} headerName - Column header name
+ * @returns {boolean} - True if column should be converted to number
+ */
+function isCurrencyColumn(headerName) {
+    const currencyColumns = [
+        'DASAR PENGENAAN PAJAK (Rupiah)',
+        'PPH YANG DIPOTONG/DIPUNGUT (Rupiah)'
+    ];
+    return currencyColumns.includes(headerName);
+}
+
 // Debug function untuk analisis DOM
 function debugTableStructure() {
     console.log('=== DEBUG TABLE STRUCTURE ===');
-    
+
     // Cari semua tabel di halaman
     const allTables = document.querySelectorAll('table');
     console.log(`Total tables found: ${allTables.length}`);
-    
+
     allTables.forEach((table, index) => {
         console.log(`\n--- Table ${index + 1} ---`);
         console.log(`ID: ${table.id}`);
         console.log(`Classes: ${table.className}`);
-        
+
         // Check thead
         const thead = table.querySelector('thead');
         if (thead) {
@@ -196,7 +248,7 @@ function debugTableStructure() {
         } else {
             console.log('No thead found');
         }
-        
+
         // Check tbody
         const tbody = table.querySelector('tbody');
         if (tbody) {
@@ -210,7 +262,7 @@ function debugTableStructure() {
             console.log('No tbody found');
         }
     });
-    
+
     // Cari element dengan id mengandung "pr_id"
     console.log('\n=== Elements with pr_id ===');
     const prElements = document.querySelectorAll('[id*="pr_id"]');
@@ -218,11 +270,117 @@ function debugTableStructure() {
     prElements.forEach(el => {
         console.log(`- ${el.id} (${el.tagName})`);
     });
-    
+
     // Cari p-datatable
     console.log('\n=== DataTables ===');
     const dataTables = document.querySelectorAll('p-datatable, [role="grid"]');
     console.log(`Found ${dataTables.length} data tables`);
+}
+
+/**
+ * Cek apakah row sudah lengkap (semua kolom terisi kecuali TINDAKAN)
+ * @param {HTMLTableRowElement} row - Row element yang dicek
+ * @param {Array} headers - Array header names
+ * @returns {boolean} - True jika row lengkap, false jika masih ada kolom kosong
+ */
+function isRowComplete(row, headers) {
+    const cells = row.querySelectorAll('td');
+
+    for (let i = 0; i < cells.length; i++) {
+        const headerName = headers[i] || '';
+        const cellText = cells[i].textContent.trim();
+
+        // Skip cek untuk kolom TINDAKAN
+        if (headerName === 'TINDAKAN') {
+            continue;
+        }
+
+        // Cek apakah kolom kosong (kecuali TINDAKAN)
+        if (cellText === '') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Cek apakah semua rows di halaman sudah lengkap
+ * @param {HTMLTableSectionElement} tbody - TBody element
+ * @param {Array} headers - Array header names
+ * @returns {Object} - { isComplete: boolean, incompleteRows: number }
+ */
+function checkPageCompleteness(tbody, headers) {
+    const rows = tbody.querySelectorAll('tr');
+    let incompleteRows = 0;
+
+    rows.forEach(row => {
+        if (!isRowComplete(row, headers)) {
+            incompleteRows++;
+        }
+    });
+
+    return {
+        isComplete: incompleteRows === 0,
+        incompleteRows: incompleteRows,
+        totalRows: rows.length
+    };
+}
+
+/**
+ * Tunggu sampai semua rows di halaman terisi (kecuali kolom TINDAKAN)
+ * @param {HTMLTableElement} tableElement - Element tabel
+ * @param {Array} headers - Array header names
+ * @param {number} maxWaitTime - Maksimum waktu tunggu dalam ms (default 30000ms = 30 detik)
+ * @param {number} checkInterval - Interval cek dalam ms (default 500ms)
+ * @returns {Promise<boolean>} - True jika semua row lengkap, false jika timeout
+ */
+async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, checkInterval = 500) {
+    const startTime = Date.now();
+    let lastIncompleteCount = -1;
+
+    log('Waiting for all rows to be filled (except TINDAKAN column)...', 'info');
+
+    while (isRunning && !stopRequested) {
+        const tbody = tableElement.querySelector('tbody');
+
+        if (!tbody) {
+            log('No tbody found while waiting for completion', 'warning');
+            return false;
+        }
+
+        const completeness = checkPageCompleteness(tbody, headers);
+
+        // Log progress hanya jika ada perubahan
+        if (completeness.incompleteRows !== lastIncompleteCount) {
+            log(`Row completion: ${completeness.totalRows - completeness.incompleteRows}/${completeness.totalRows} rows complete (${completeness.incompleteRows} remaining)`, 'info');
+            lastIncompleteCount = completeness.incompleteRows;
+        }
+
+        // Cek jika sudah lengkap
+        if (completeness.isComplete) {
+            log('All rows on this page are complete!', 'success');
+            return true;
+        }
+
+        // Cek timeout
+        const elapsed = Date.now() - startTime;
+        if (elapsed >= maxWaitTime) {
+            log(`Timeout waiting for page completion. ${completeness.incompleteRows} rows still incomplete.`, 'warning');
+            return false;
+        }
+
+        // Cek stop requested
+        if (stopRequested) {
+            log('Stop requested while waiting for page completion', 'warning');
+            return false;
+        }
+
+        // Tunggu sebelum cek lagi
+        await sleep(checkInterval);
+    }
+
+    return false;
 }
 
 // --- 3. CORE SCRAPING LOGIC ---
@@ -322,43 +480,64 @@ async function startScraping(configData = {}) {
             rows.forEach(row => {
                 const rowData = [];
                 const cells = row.querySelectorAll('td');
-                
-                cells.forEach(td => {
+
+                cells.forEach((td, index) => {
                     // Clone node agar tidak merusak tampilan asli halaman
                     const clone = td.cloneNode(true);
-                    
+
                     // Hapus span label jika ada (PrimeNG column title)
                     const labelSpan = clone.querySelector('.p-column-title');
                     if (labelSpan) {
                         labelSpan.remove();
                     }
-                    
+
                     // Ambil textContent bersih (trim whitespace)
-                    const cellText = clone.textContent.trim()
+                    let cellText = clone.textContent.trim()
                         .replace(/\s+/g, ' '); // Replace multiple spaces dengan single space
+
+                    // Convert currency columns to number
+                    const headerName = headers[index] || '';
+                    if (isCurrencyColumn(headerName)) {
+                        cellText = parseCurrency(cellText);
+                    }
+
                     rowData.push(cellText);
                 });
-                
+
                 // Hanya tambah row jika punya data (filter row kosong)
-                if (rowData.some(cell => cell.length > 0)) {
+                if (rowData.some(cell => cell && cell.length > 0)) {
                     allData.push(rowData);
                 }
             });
 
             log(`Current total rows: ${allData.length}`);
 
+            // Tunggu sampai semua rows terisi sebelum next page
+            const pageComplete = await waitForPageComplete(
+                tableElement,
+                headers,
+                30000,  // max 30 detik per page
+                500     // cek setiap 500ms
+            );
+
+            // Cek apakah user menekan stop button
+            if (stopRequested) {
+                log('Stop requested, breaking loop', 'warning');
+                break;
+            }
+
             // Cek apakah ada tombol Next untuk pagination
             // Gunakan selector yang lebih specific untuk PrimeNG paginator
             const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
             const paginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
             const paginator = document.querySelector(paginatorSelector);
-            
+
             // Fallback ke selector umum jika specific tidak ditemukan
             const paginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
                 ?.querySelector('.p-paginator-next');
-            
+
             const nextButton = paginator || paginatorFallback;
-            
+
             if (!nextButton || nextButton.classList.contains('p-disabled')) {
                 log('No more pages or last page reached', 'success');
                 break;

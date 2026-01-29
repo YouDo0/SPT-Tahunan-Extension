@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "SPT Tahunan Scraper",
-  "version": "1.1",
-  "description": "Scraping tabel PrimeNG ke Excel secara otomatis dengan kontrol dari popup.",
+  "version": "1.2",
+  "description": "Scraping tabel di section SPT Tahunan secara otomatis di dalam CORETAX. Last Update : Add checker for the table",
   "permissions": [
     "activeTab",
     "scripting",
