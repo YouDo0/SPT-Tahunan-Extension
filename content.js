@@ -1,4 +1,4 @@
-// ============================================
+﻿// ============================================
 // SPT Tahunan Scraper - Content Script
 // Menggunakan async/await untuk kontrol penuh
 // ============================================
@@ -383,6 +383,65 @@ async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, c
     return false;
 }
 
+/**
+ * Extract "BUKTI POTONG/SSP/SSPCP - NOMOR" values from the current page
+ * @param {HTMLTableElement} tableElement - Element tabel
+ * @param {Array} headers - Array header names
+ * @returns {Array} - Array of "BUKTI POTONG/SSP/SSPCP - NOMOR" values
+ */
+function extractBuktiPotongValues(tableElement, headers) {
+    const tbody = tableElement.querySelector("tbody");
+    if (!tbody) return [];
+
+    const values = [];
+    const rows = tbody.querySelectorAll("tr");
+
+    // Find index of "BUKTI POTONG/SSP/SSPCP - NOMOR" column
+    const buktiPotongIndex = headers.findIndex(h => h === "BUKTI POTONG/SSP/SSPCP - NOMOR");
+
+    // Fallback to index 8 if not found by name
+    const columnIndex = buktiPotongIndex !== -1 ? buktiPotongIndex : 8;
+
+    rows.forEach(row => {
+        const cells = row.querySelectorAll("td");
+        if (cells[columnIndex]) {
+            const clone = cells[columnIndex].cloneNode(true);
+            const labelSpan = clone.querySelector(".p-column-title");
+            if (labelSpan) {
+                labelSpan.remove();
+            }
+            const value = clone.textContent.trim().replace(/\s+/g, " ");
+            values.push(value);
+        }
+    });
+
+    return values;
+}
+
+/**
+ * Check if current page has duplicate data (same as previous page)
+ * @param {Array} currentPageValues - Values from current page
+ * @param {Array} previousPageValues - Values from previous page
+ * @returns {boolean} - True if duplicate detected
+ */
+function isDuplicatePage(currentPageValues, previousPageValues) {
+    if (!previousPageValues || previousPageValues.length === 0) {
+        return false;
+    }
+
+    // Check if all values in current page match the previous page
+    if (currentPageValues.length !== previousPageValues.length) {
+        return false;
+    }
+
+    for (let i = 0; i < currentPageValues.length; i++) {
+        if (currentPageValues[i] !== previousPageValues[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
 // --- 3. CORE SCRAPING LOGIC ---
 
 async function startScraping(configData = {}) {
@@ -391,6 +450,11 @@ async function startScraping(configData = {}) {
 
     isRunning = true;
     stopRequested = false;
+    // Duplicate detection variables
+    let lastPageBuktiPotongValues = [];  // Store values from last page
+    let duplicateRetryCount = 0;         // Track retry attempts
+    const MAX_DUPLICATE_RETRY = 10;      // Max retry before stopping
+
 
     // Debug struktur table
     debugTableStructure();
@@ -543,14 +607,61 @@ async function startScraping(configData = {}) {
                 break;
             }
 
-            // Klik tombol Next
-            log('Moving to next page...');
+            // DUPLICATE CHECK: Check for duplicate content before proceeding
+            log("Checking for duplicate content on next page...", "info");
             nextButton.click();
+            await sleep(500); // Wait for page to load
 
-            // Delay setelah klik agar halaman load (dikurangi dari 500ms default)
-            // Gunakan 300ms default atau sesuai setting user
-            const pageLoadDelay = Math.min(config.delay, 300);
-            await sleep(pageLoadDelay);
+            // Find Previous button for retry logic - using same robust approach as Next button
+            const prevPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-prev`;
+            const prevPaginator = document.querySelector(prevPaginatorSelector);
+
+            // Fallback ke selector umum jika specific tidak ditemukan
+            const prevPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                ?.querySelector('.p-paginator-prev');
+
+            const prevButton = prevPaginator || prevPaginatorFallback;
+
+            // Extract values from the new page (which might be duplicate)
+            const currentPageValues = extractBuktiPotongValues(tableElement, headers);
+
+            // Check if this page is duplicate of the previous page
+            if (isDuplicatePage(currentPageValues, lastPageBuktiPotongValues)) {
+                const retryMsg = "Duplicate page detected! (Attempt " + (duplicateRetryCount + 1) + "/" + MAX_DUPLICATE_RETRY + ")";
+                log(retryMsg, "warning");
+
+                duplicateRetryCount++;
+
+                if (duplicateRetryCount > MAX_DUPLICATE_RETRY) {
+                    const maxRetryMsg = "Maximum duplicate retry count (" + MAX_DUPLICATE_RETRY + ") exceeded. Stopping and saving data.";
+                    log(maxRetryMsg, "error");
+                    break;
+                }
+
+                // Go back to previous page and retry
+                if (prevButton && !prevButton.classList.contains("p-disabled")) {
+                    log("Going back to previous page to retry...", "info");
+                    prevButton.click();
+                    await sleep(500);
+
+                    // Click Next again to retry
+                    log("Retrying next page...", "info");
+                    nextButton.click();
+                    await sleep(500);
+
+                    // Continue to next iteration to check again
+                    continue;
+                } else {
+                    log("Cannot go back (no previous button). Stopping.", "error");
+                    break;
+                }
+            } else {
+                // Not a duplicate, reset retry counter and update stored values
+                duplicateRetryCount = 0;
+                lastPageBuktiPotongValues = currentPageValues;
+                const successMsg = "Page " + pageCount + " is unique. Continuing...";
+                log(successMsg, "success");
+            }
         }
 
         // Ekspor ke Excel jika ada data

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "SPT Tahunan Scraper",
-  "version": "1.2",
-  "description": "Scraping tabel di section SPT Tahunan secara otomatis di dalam CORETAX. Last Update : Add checker for the table",
+  "version": "1.3",
+  "description": "Scraping tabel di section SPT Tahunan secara otomatis di dalam CORETAX. Last Update : Add checker for the table (Deployment version), Last Update : 03-02-26",
   "permissions": [
     "activeTab",
     "scripting",
