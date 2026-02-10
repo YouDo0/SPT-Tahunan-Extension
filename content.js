@@ -442,6 +442,86 @@ function isDuplicatePage(currentPageValues, previousPageValues) {
 
     return true;
 }
+
+/**
+ * Extract all row data from current page into array
+ * @param {HTMLTableElement} tableElement - Element tabel
+ * @param {Array} headers - Array header names
+ * @returns {Array} - Array of row data arrays
+ */
+function extractPageData(tableElement, headers) {
+    const pageData = [];
+    const tbody = tableElement.querySelector('tbody');
+    
+    if (!tbody) return pageData;
+    
+    const rows = tbody.querySelectorAll('tr');
+    
+    rows.forEach(row => {
+        const rowData = [];
+        const cells = row.querySelectorAll('td');
+
+        cells.forEach((td, index) => {
+            const clone = td.cloneNode(true);
+            const labelSpan = clone.querySelector('.p-column-title');
+            if (labelSpan) {
+                labelSpan.remove();
+            }
+
+            let cellText = clone.textContent.trim().replace(/\s+/g, ' ');
+            const headerName = headers[index] || '';
+            if (isCurrencyColumn(headerName)) {
+                cellText = parseCurrency(cellText);
+            }
+
+            rowData.push(cellText);
+        });
+
+        if (rowData.some(cell => cell && cell.length > 0)) {
+            pageData.push(rowData);
+        }
+    });
+
+    return pageData;
+}
+
+/**
+ * Compare two pages of data using only the specific unique column (BUKTI POTONG/SSP/SSPCP - NOMOR)
+ * @param {Array} currentPageData - Data from current page
+ * @param {Array} previousPageData - Data from previous page
+ * @param {Array} headers - Column headers to find the index
+ * @returns {boolean} - True if duplicate detected
+ */
+function isPageDataDuplicate(currentPageData, previousPageData, headers) {
+    if (!previousPageData || previousPageData.length === 0) {
+        return false;
+    }
+
+    if (currentPageData.length !== previousPageData.length) {
+        return false;
+    }
+
+    // Find index of BUKTI POTONG/SSP/SSPCP - NOMOR column
+    const columnIndex = headers ? headers.findIndex(h => h === "BUKTI POTONG/SSP/SSPCP - NOMOR") : -1;
+    const checkIndex = columnIndex !== -1 ? columnIndex : 8; // Fallback to index 8
+
+    // Compare only the specific column
+    for (let i = 0; i < currentPageData.length; i++) {
+        const currentRow = currentPageData[i];
+        const previousRow = previousPageData[i];
+
+        if (!currentRow[checkIndex] || !previousRow[checkIndex]) {
+            return false;
+        }
+
+        if (currentRow[checkIndex] !== previousRow[checkIndex]) {
+            return false;
+        }
+    }
+
+    return true; // All values in the key column match - is a duplicate
+}
+
 // --- 3. CORE SCRAPING LOGIC ---
 
 async function startScraping(configData = {}) {
@@ -454,6 +534,7 @@ async function startScraping(configData = {}) {
     let lastPageBuktiPotongValues = [];  // Store values from last page
     let duplicateRetryCount = 0;         // Track retry attempts
     const MAX_DUPLICATE_RETRY = 10;      // Max retry before stopping
+    let lastPageData = [];               // Store last page data for comparison
 
 
     // Debug struktur table
@@ -517,19 +598,14 @@ async function startScraping(configData = {}) {
             pageCount++;
             log(`Scraping page ${pageCount}...`);
 
-            // Ambil Data di Halaman Saat Ini dari tbody
-            const tbody = tableElement.querySelector('tbody');
-            let rows = [];
+            // EXTRACT page data to temporary variable FIRST
+            const pageData = extractPageData(tableElement, headers);
             
-            if (tbody) {
-                rows = tbody.querySelectorAll('tr');
-                log(`Found ${rows.length} rows in tbody`, 'info');
+            if (pageData.length === 0) {
+                log(`No data found on page ${pageCount}`, 'warning');
             } else {
-                log('No tbody found in selected table', 'warning');
-                break;
+                log(`Found ${pageData.length} rows on page ${pageCount}`, 'info');
             }
-            
-            log(`Processing ${rows.length} rows on page ${pageCount}`);
             
             // Yield ke event loop agar stop button responsive
             await sleep(0);
@@ -539,44 +615,8 @@ async function startScraping(configData = {}) {
                 log('Stop requested, breaking loop', 'warning');
                 break;
             }
-            
-            // Loop setiap row dan ekstrak data
-            rows.forEach(row => {
-                const rowData = [];
-                const cells = row.querySelectorAll('td');
 
-                cells.forEach((td, index) => {
-                    // Clone node agar tidak merusak tampilan asli halaman
-                    const clone = td.cloneNode(true);
-
-                    // Hapus span label jika ada (PrimeNG column title)
-                    const labelSpan = clone.querySelector('.p-column-title');
-                    if (labelSpan) {
-                        labelSpan.remove();
-                    }
-
-                    // Ambil textContent bersih (trim whitespace)
-                    let cellText = clone.textContent.trim()
-                        .replace(/\s+/g, ' '); // Replace multiple spaces dengan single space
-
-                    // Convert currency columns to number
-                    const headerName = headers[index] || '';
-                    if (isCurrencyColumn(headerName)) {
-                        cellText = parseCurrency(cellText);
-                    }
-
-                    rowData.push(cellText);
-                });
-
-                // Hanya tambah row jika punya data (filter row kosong)
-                if (rowData.some(cell => cell && cell.length > 0)) {
-                    allData.push(rowData);
-                }
-            });
-
-            log(`Current total rows: ${allData.length}`);
-
-            // Tunggu sampai semua rows terisi sebelum next page
+            // Tunggu sampai semua rows terisi sebelum check duplikasi
             const pageComplete = await waitForPageComplete(
                 tableElement,
                 headers,
@@ -590,16 +630,60 @@ async function startScraping(configData = {}) {
                 break;
             }
 
+            // CHECK FOR DUPLICATES BEFORE ADDING TO allData
+            if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
+                log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
+                duplicateRetryCount++;
+
+                if (duplicateRetryCount > MAX_DUPLICATE_RETRY) {
+                    log(`Max retry (${MAX_DUPLICATE_RETRY}) exceeded. Stopping.`, "error");
+                    break;
+                }
+
+                // Cek apakah ada tombol Next untuk pagination
+                const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
+                const prevPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-prev`;
+                const prevPaginator = document.querySelector(prevPaginatorSelector);
+                const prevPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                    ?.querySelector('.p-paginator-prev');
+                const prevButton = prevPaginator || prevPaginatorFallback;
+
+                if (prevButton && !prevButton.classList.contains("p-disabled")) {
+                    log("Going back to retry...", "info");
+                    prevButton.click();
+                    await sleep(1000);
+                    
+                    const nextPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+                    const nextPaginator = document.querySelector(nextPaginatorSelector);
+                    const nextPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                        ?.querySelector('.p-paginator-next');
+                    const nextButton = nextPaginator || nextPaginatorFallback;
+                    
+                    if (nextButton) {
+                        nextButton.click();
+                        await sleep(1000);
+                        continue;
+                    }
+                } else {
+                    log("Cannot go back. Stopping.", "error");
+                    break;
+                }
+            }
+
+            // NOT A DUPLICATE - Add to allData
+            if (pageData.length > 0) {
+                duplicateRetryCount = 0;
+                lastPageData = pageData;
+                allData = allData.concat(pageData);
+                log(`Current total rows: ${allData.length}`);
+            }
+
             // Cek apakah ada tombol Next untuk pagination
-            // Gunakan selector yang lebih specific untuk PrimeNG paginator
             const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
             const paginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
             const paginator = document.querySelector(paginatorSelector);
-
-            // Fallback ke selector umum jika specific tidak ditemukan
             const paginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
                 ?.querySelector('.p-paginator-next');
-
             const nextButton = paginator || paginatorFallback;
 
             if (!nextButton || nextButton.classList.contains('p-disabled')) {
@@ -607,61 +691,8 @@ async function startScraping(configData = {}) {
                 break;
             }
 
-            // DUPLICATE CHECK: Check for duplicate content before proceeding
-            log("Checking for duplicate content on next page...", "info");
             nextButton.click();
-            await sleep(500); // Wait for page to load
-
-            // Find Previous button for retry logic - using same robust approach as Next button
-            const prevPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-prev`;
-            const prevPaginator = document.querySelector(prevPaginatorSelector);
-
-            // Fallback ke selector umum jika specific tidak ditemukan
-            const prevPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
-                ?.querySelector('.p-paginator-prev');
-
-            const prevButton = prevPaginator || prevPaginatorFallback;
-
-            // Extract values from the new page (which might be duplicate)
-            const currentPageValues = extractBuktiPotongValues(tableElement, headers);
-
-            // Check if this page is duplicate of the previous page
-            if (isDuplicatePage(currentPageValues, lastPageBuktiPotongValues)) {
-                const retryMsg = "Duplicate page detected! (Attempt " + (duplicateRetryCount + 1) + "/" + MAX_DUPLICATE_RETRY + ")";
-                log(retryMsg, "warning");
-
-                duplicateRetryCount++;
-
-                if (duplicateRetryCount > MAX_DUPLICATE_RETRY) {
-                    const maxRetryMsg = "Maximum duplicate retry count (" + MAX_DUPLICATE_RETRY + ") exceeded. Stopping and saving data.";
-                    log(maxRetryMsg, "error");
-                    break;
-                }
-
-                // Go back to previous page and retry
-                if (prevButton && !prevButton.classList.contains("p-disabled")) {
-                    log("Going back to previous page to retry...", "info");
-                    prevButton.click();
-                    await sleep(500);
-
-                    // Click Next again to retry
-                    log("Retrying next page...", "info");
-                    nextButton.click();
-                    await sleep(500);
-
-                    // Continue to next iteration to check again
-                    continue;
-                } else {
-                    log("Cannot go back (no previous button). Stopping.", "error");
-                    break;
-                }
-            } else {
-                // Not a duplicate, reset retry counter and update stored values
-                duplicateRetryCount = 0;
-                lastPageBuktiPotongValues = currentPageValues;
-                const successMsg = "Page " + pageCount + " is unique. Continuing...";
-                log(successMsg, "success");
-            }
+            await sleep(1000);
         }
 
         // Ekspor ke Excel jika ada data
