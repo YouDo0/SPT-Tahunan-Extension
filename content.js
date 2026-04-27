@@ -412,18 +412,30 @@ function checkPageCompleteness(tbody, headers) {
  * @param {number} checkInterval - Interval cek dalam ms (default 500ms)
  * @returns {Promise<boolean>} - True jika semua row lengkap, false jika timeout
  */
-async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, checkInterval = 500) {
+async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, checkInterval = 500, maxRetries = 10) {
     const startTime = Date.now();
     let lastIncompleteCount = -1;
+    let retryCount = 0;
+    const retryInterval = 30000; // 30 detik per retry
 
     log('Waiting for all rows to be filled (except TINDAKAN column)...', 'info');
 
     while (isRunning && !stopRequested) {
+        // Cek jika sudah melebihi batas retry
+        if (retryCount >= maxRetries) {
+            log(`Max retry count (${maxRetries} x 30s = ${maxRetries * 30}s) exceeded. Data never loaded.`, 'error');
+            throw new Error(`Data tidak muncul setelah menunggu ${maxRetries * 30} detik. Kemungkinan halaman tidak memuat data dengan benar.`);
+        }
+
         const tbody = tableElement.querySelector('tbody');
 
         if (!tbody) {
             log('No tbody found while waiting for completion', 'warning');
-            return false;
+            // Tunggu 30 detik sebelum retry
+            await sleep(retryInterval);
+            retryCount++;
+            log(`Retry ${retryCount}/${maxRetries} - waiting 30s for tbody to appear...`, 'info');
+            continue;
         }
 
         const completeness = checkPageCompleteness(tbody, headers);
@@ -440,11 +452,18 @@ async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, c
             return true;
         }
 
-        // Cek timeout
+        // Cek timeout per cycle
         const elapsed = Date.now() - startTime;
-        if (elapsed >= maxWaitTime) {
-            log(`Timeout waiting for page completion. ${completeness.incompleteRows} rows still incomplete.`, 'warning');
-            return false;
+        if (elapsed >= retryInterval) {
+            // Reset timer dan increment retry
+            startTime = Date.now();
+            retryCount++;
+            log(`Retry ${retryCount}/${maxRetries} - waiting 30s for data to load...`, 'info');
+
+            if (retryCount >= maxRetries) {
+                log(`Max retry count (${maxRetries} x 30s = ${maxRetries * 30}s) exceeded. Data never loaded.`, 'error');
+                throw new Error(`Data tidak muncul setelah menunggu ${maxRetries * 30} detik. Kemungkinan halaman tidak memuat data dengan benar.`);
+            }
         }
 
         // Cek stop requested
@@ -578,8 +597,17 @@ function isPageDataDuplicate(currentPageData, previousPageData, headers) {
         return false;
     }
 
-    // Find index of BUKTI POTONG/SSP/SSPCP - NOMOR column
-    const columnIndex = headers ? headers.findIndex(h => h === "BUKTI POTONG/SSP/SSPCP - NOMOR") : -1;
+    // Determine duplicate check column based on SPT type
+    // L3 uses "BUKTI POTONG/SSP/SSPCP - NOMOR", L9 uses "KETERANGAN"
+    let columnName;
+    if (config.sptType === 'L9') {
+        columnName = "KETERANGAN";
+    } else {
+        columnName = "BUKTI POTONG/SSP/SSPCP - NOMOR";
+    }
+
+    // Find index of the appropriate column
+    const columnIndex = headers ? headers.findIndex(h => h === columnName) : -1;
     const checkIndex = columnIndex !== -1 ? columnIndex : 8; // Fallback to index 8
 
     // Compare only the specific column
@@ -675,7 +703,8 @@ async function scrapeSingleTable(tableIndex, allTables) {
             tableElement,
             headers,
             30000,
-            500
+            500,
+            10
         );
 
         // Cek apakah user menekan stop button
@@ -792,7 +821,7 @@ async function startScraping(configData = {}) {
 
                 log(`Scraping category ${catNum}: ${catInfo.name} (table index ${catInfo.tableIndex})`, 'info');
 
-                const result = scrapeSingleTable(catInfo.tableIndex, allTables);
+                const result = await scrapeSingleTable(catInfo.tableIndex, allTables);
                 const rowCount = result.data.length;
                 totalRows += rowCount;
 
