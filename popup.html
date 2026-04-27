@@ -197,6 +197,78 @@
             cursor: pointer;
         }
 
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
+
+        .radio-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .radio-item input[type="radio"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+
+        .l9-options {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+
+        .l9-options.visible {
+            display: block;
+        }
+
+        .l9-options-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            opacity: 0.9;
+        }
+
+        .l9-options-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 12px;
+        }
+
+        .l9-option {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .l9-option input[type="checkbox"] {
+            width: 13px;
+            height: 13px;
+            cursor: pointer;
+        }
+
+        .choose-all-row {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .choose-all-row input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+
         .footer {
             font-size: 11px;
             text-align: center;
@@ -239,6 +311,80 @@
             <div class="section-title">Pengaturan</div>
             <div class="settings">
                 <div class="setting-item">
+                    <label for="sptType">Tipe SPT:</label>
+                </div>
+                <div class="radio-group">
+                    <label class="radio-item">
+                        <input type="radio" name="sptType" value="L3" checked>
+                        L3
+                    </label>
+                    <label class="radio-item">
+                        <input type="radio" name="sptType" value="L9">
+                        L9
+                    </label>
+                </div>
+
+                <div class="l9-options" id="l9Options">
+                    <div class="l9-options-title">Kategori Harta/Penyusutan:</div>
+                    <div class="choose-all-row">
+                        <label class="l9-option">
+                            <input type="checkbox" id="l9ChooseAll">
+                            Pilih Semua
+                        </label>
+                    </div>
+                    <div class="l9-options-grid">
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="1">
+                            Harta Berwujud - Kelompok 1
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="2">
+                            Harta Berwujud - Kelompok 2
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="3">
+                            Harta Berwujud - Kelompok 3
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="4">
+                            Harta Berwujud - Kelompok 4
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="5">
+                            Harta Berwujud - Kelompok Lainnya
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="6">
+                            Bangunan - Permanen
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="7">
+                            Bangunan - Tidak Permanen
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="8">
+                            Harta Tidak Berwujud - Kelompok 1
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="9">
+                            Harta Tidak Berwujud - Kelompok 2
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="10">
+                            Harta Tidak Berwujud - Kelompok 3
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="11">
+                            Harta Tidak Berwujud - Kelompok 4
+                        </label>
+                        <label class="l9-option">
+                            <input type="checkbox" class="l9-category" value="12">
+                            Harta Tidak Berwujud - Kelompok Lainnya
+                        </label>
+                    </div>
+                </div>
+
+                <div class="setting-item">
                     <label>
                         <input type="checkbox" id="autoExport" checked>
                         Auto Export
@@ -253,7 +399,7 @@
 
         <!-- Footer -->
         <div class="footer">
-            <p>v1.1 | SPT Tahunan Automation</p>
+            <p>v1.2 | SPT Tahunan Automation (L3/L9)</p>
         </div>
     </div>
 

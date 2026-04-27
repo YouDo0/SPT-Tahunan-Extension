@@ -6,8 +6,28 @@
 let isRunning = false;
 let stopRequested = false;
 let config = {
+    sptType: 'L3',
+    selectedCategories: [],
     autoExport: true,
     delay: 500,
+};
+
+const MAX_DUPLICATE_RETRY = 10;
+
+// L9 Category mapping (1-based index to table index)
+const L9_CATEGORY_MAP = {
+    1: { tableIndex: 8, name: 'Harta Berwujud - Kelompok 1' },
+    2: { tableIndex: 9, name: 'Harta Berwujud - Kelompok 2' },
+    3: { tableIndex: 10, name: 'Harta Berwujud - Kelompok 3' },
+    4: { tableIndex: 11, name: 'Harta Berwujud - Kelompok 4' },
+    5: { tableIndex: 12, name: 'Harta Berwujud - Kelompok Lainnya' },
+    6: { tableIndex: 13, name: 'Bangunan - Permanen' },
+    7: { tableIndex: 14, name: 'Bangunan - Tidak Permanen' },
+    8: { tableIndex: 15, name: 'Harta Tidak Berwujud - Kelompok 1' },
+    9: { tableIndex: 16, name: 'Harta Tidak Berwujud - Kelompok 2' },
+    10: { tableIndex: 17, name: 'Harta Tidak Berwujud - Kelompok 3' },
+    11: { tableIndex: 18, name: 'Harta Tidak Berwujud - Kelompok 4' },
+    12: { tableIndex: 19, name: 'Harta Tidak Berwujud - Kelompok Lainnya' },
 };
 
 // ============================================
@@ -69,12 +89,12 @@ function analyzeTables() {
 // EXPORT FUNCTION - Menggunakan XLSX Library langsung di content script
 // ============================================
 
-async function exportToExcel(headers, data) {
+async function exportToExcel(headers, data, categoryName) {
     try {
         // Validasi XLSX library
         if (typeof XLSX === 'undefined') {
             log('XLSX library not found, using fallback CSV export', 'warning');
-            return exportToXLSXBinary(headers, data);
+            return exportToXLSXBinary(headers, data, categoryName);
         }
 
         log(`Preparing to export ${data.length} rows...`, 'info');
@@ -90,13 +110,18 @@ async function exportToExcel(headers, data) {
         const wscols = headers.map(() => ({ wch: 25 }));
         ws['!cols'] = wscols;
 
-        // Add sheet ke workbook
-        XLSX.utils.book_append_sheet(wb, ws, "SPT Tahunan Data");
+        // Sanitize sheet name (max 31 chars, no special chars)
+        const sheetName = categoryName
+            ? categoryName.substring(0, 25).replace(/[\\/?*\[\]]/g, '_')
+            : "SPT Tahunan Data";
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
-        // Generate filename dengan timestamp
+        // Generate filename dengan timestamp and category suffix
         const dateStr = new Date().toISOString().slice(0, 10);
         const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
-        const filename = `SPT_Tahunan_${dateStr}_${timeStr}.xlsx`;
+        const filename = categoryName
+            ? `SPT_Tahunan_${sanitizeFilename(categoryName)}_${dateStr}_${timeStr}.xlsx`
+            : `SPT_Tahunan_${dateStr}_${timeStr}.xlsx`;
 
         // Download file
         XLSX.writeFile(wb, filename);
@@ -107,15 +132,65 @@ async function exportToExcel(headers, data) {
     } catch (error) {
         log(`Export error: ${error.message}`, 'error');
         console.error('Full export error:', error);
-        
+
         // Fallback ke CSV binary jika XLSX gagal
         log('Attempting fallback CSV export...', 'warning');
-        return exportToXLSXBinary(headers, data);
+        return exportToXLSXBinary(headers, data, categoryName);
+    }
+}
+
+function sanitizeFilename(name) {
+    return name.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 30);
+}
+
+/**
+ * Export L9 multiple categories to separate sheets in one workbook
+ * @param {Array} categoryDataArray - Array of { categoryName, headers, data } objects
+ */
+async function exportL9ToExcel(categoryDataArray) {
+    try {
+        if (typeof XLSX === 'undefined') {
+            log('XLSX library not found, falling back to individual CSV exports', 'warning');
+            for (const catData of categoryDataArray) {
+                await exportToXLSXBinary(catData.headers, catData.data, catData.categoryName);
+            }
+            return true;
+        }
+
+        log(`Preparing to export ${categoryDataArray.length} categories...`, 'info');
+
+        const wb = XLSX.utils.book_new();
+
+        for (const catData of categoryDataArray) {
+            const wsData = [catData.headers, ...catData.data];
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            const wscols = catData.headers.map(() => ({ wch: 25 }));
+            ws['!cols'] = wscols;
+
+            const sheetName = catData.categoryName
+                ? catData.categoryName.substring(0, 25).replace(/[\\/?*\[\]]/g, '_')
+                : "Data";
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        }
+
+        // Generate filename
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
+        const filename = `SPT_Tahunan_L9_${dateStr}_${timeStr}.xlsx`;
+
+        XLSX.writeFile(wb, filename);
+        log(`L9 file downloaded: ${filename}`, 'success');
+        return true;
+
+    } catch (error) {
+        log(`L9 export error: ${error.message}`, 'error');
+        console.error('L9 export error:', error);
+        return false;
     }
 }
 
 // Metode 2: Export Pure CSV ke file (Fallback jika XLSX tidak tersedia)
-function exportToXLSXBinary(headers, data) {
+function exportToXLSXBinary(headers, data, categoryName) {
     try {
         const escapeCSV = (val) => {
             val = String(val).trim();
@@ -133,27 +208,29 @@ function exportToXLSXBinary(headers, data) {
 
         // Gunakan BOM untuk UTF-8 Excel compatibility
         const BOM = '\uFEFF';
-        const blob = new Blob([BOM + csvContent], { 
+        const blob = new Blob([BOM + csvContent], {
             type: 'application/vnd.ms-excel;charset=utf-8;'
         });
-        
+
         const dateStr = new Date().toISOString().slice(0, 10);
         const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
-        const filename = `SPT_Tahunan_${dateStr}_${timeStr}.csv`;
+        const filename = categoryName
+            ? `SPT_Tahunan_${sanitizeFilename(categoryName)}_${dateStr}_${timeStr}.csv`
+            : `SPT_Tahunan_${dateStr}_${timeStr}.csv`;
 
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
-        
+
         link.setAttribute('href', url);
         link.setAttribute('download', filename);
         link.style.visibility = 'hidden';
-        
+
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        
+
         URL.revokeObjectURL(url);
-        
+
         log(`Fallback file downloaded: ${filename}`, 'warning');
         return true;
 
@@ -524,18 +601,163 @@ function isPageDataDuplicate(currentPageData, previousPageData, headers) {
 
 // --- 3. CORE SCRAPING LOGIC ---
 
+/**
+ * Scrape a single table (reusable for L3 and L9)
+ */
+async function scrapeSingleTable(tableIndex, allTables) {
+    if (tableIndex >= allTables.length) {
+        log(`Table index ${tableIndex} out of range (only ${allTables.length} tables)`, 'error');
+        return { headers: [], data: [], pageCount: 0 };
+    }
+
+    const selectedTable = allTables[tableIndex];
+    const tableElement = selectedTable.element;
+
+    log(`Selected table index ${tableIndex}: ${selectedTable.headerPreview}`, 'info');
+    log(`Table has ${selectedTable.rowCount} rows`, 'info');
+
+    let allData = [];
+    let headers = [];
+    let pageCount = 0;
+    let lastPageData = [];
+    let duplicateRetryCount = 0;
+
+    // Ambil Header dari elemen tabel yang dipilih
+    let headerRow = tableElement.querySelector('thead > tr:first-child');
+
+    // Fallback 1: Jika tidak ada thead, cari tr pertama dengan th
+    if (!headerRow) {
+        const allTr = tableElement.querySelectorAll('tr');
+        for (let tr of allTr) {
+            if (tr.querySelector('th')) {
+                headerRow = tr;
+                break;
+            }
+        }
+    }
+
+    if (headerRow) {
+        headers = Array.from(headerRow.querySelectorAll('th'))
+            .map(th => th.innerText.trim())
+            .filter(text => text.length > 0 && text !== 'Silakan Pilih');
+        log(`Headers found: ${headers.length}`, 'success');
+        console.log('Headers extracted:', headers);
+    } else {
+        log('No proper header found, using empty headers...', 'warning');
+        headers = [];
+    }
+
+    // Looping Halaman (async)
+    while (isRunning && !stopRequested) {
+        pageCount++;
+        log(`Scraping page ${pageCount}...`);
+
+        // EXTRACT page data to temporary variable FIRST
+        const pageData = extractPageData(tableElement, headers);
+
+        if (pageData.length === 0) {
+            log(`No data found on page ${pageCount}`, 'warning');
+        } else {
+            log(`Found ${pageData.length} rows on page ${pageCount}`, 'info');
+        }
+
+        // Yield ke event loop agar stop button responsive
+        await sleep(0);
+
+        // Cek apakah user menekan stop button
+        if (stopRequested) {
+            log('Stop requested, breaking loop', 'warning');
+            break;
+        }
+
+        // Tunggu sampai semua rows terisi sebelum check duplikasi
+        const pageComplete = await waitForPageComplete(
+            tableElement,
+            headers,
+            30000,
+            500
+        );
+
+        // Cek apakah user menekan stop button
+        if (stopRequested) {
+            log('Stop requested, breaking loop', 'warning');
+            break;
+        }
+
+        // CHECK FOR DUPLICATES BEFORE ADDING TO allData
+        if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
+            log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
+            duplicateRetryCount++;
+
+            if (duplicateRetryCount > MAX_DUPLICATE_RETRY) {
+                log(`Max retry (${MAX_DUPLICATE_RETRY}) exceeded. Stopping.`, "error");
+                break;
+            }
+
+            // Cek apakah ada tombol Next untuk pagination
+            const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
+            const prevPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-prev`;
+            const prevPaginator = document.querySelector(prevPaginatorSelector);
+            const prevPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                ?.querySelector('.p-paginator-prev');
+            const prevButton = prevPaginator || prevPaginatorFallback;
+
+            if (prevButton && !prevButton.classList.contains("p-disabled")) {
+                log("Going back to retry...", "info");
+                prevButton.click();
+                await sleep(1000);
+
+                const nextPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+                const nextPaginator = document.querySelector(nextPaginatorSelector);
+                const nextPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                    ?.querySelector('.p-paginator-next');
+                const nextButton = nextPaginator || nextPaginatorFallback;
+
+                if (nextButton) {
+                    nextButton.click();
+                    await sleep(1000);
+                    continue;
+                }
+            } else {
+                log("Cannot go back. Stopping.", "error");
+                break;
+            }
+        }
+
+        // NOT A DUPLICATE - Add to allData
+        if (pageData.length > 0) {
+            duplicateRetryCount = 0;
+            lastPageData = pageData;
+            allData = allData.concat(pageData);
+            log(`Current total rows: ${allData.length}`);
+        }
+
+        // Cek apakah ada tombol Next untuk pagination
+        const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
+        const paginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+        const paginator = document.querySelector(paginatorSelector);
+        const paginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+            ?.querySelector('.p-paginator-next');
+        const nextButton = paginator || paginatorFallback;
+
+        if (!nextButton || nextButton.classList.contains('p-disabled')) {
+            log('No more pages or last page reached', 'success');
+            break;
+        }
+
+        nextButton.click();
+        await sleep(1000);
+    }
+
+    return { headers, data: allData, pageCount };
+}
+
 async function startScraping(configData = {}) {
     // Update config dengan nilai dari popup
     Object.assign(config, configData);
 
     isRunning = true;
     stopRequested = false;
-    // Duplicate detection variables
-    let lastPageBuktiPotongValues = [];  // Store values from last page
-    let duplicateRetryCount = 0;         // Track retry attempts
-    const MAX_DUPLICATE_RETRY = 10;      // Max retry before stopping
-    let lastPageData = [];               // Store last page data for comparison
-
 
     // Debug struktur table
     debugTableStructure();
@@ -544,183 +766,121 @@ async function startScraping(configData = {}) {
     // Scan semua tabel di halaman
     const allTables = analyzeTables();
     log(`Found ${allTables.length} total tables on page`, 'info');
-    
-    // Validasi: cek apakah table index 4 (5th table) tersedia
-    if (allTables.length < 5) {
-        const errorMsg = `Need at least 5 tables on page, but only found ${allTables.length} table(s).`;
-        log(errorMsg, 'error');
-        throw new Error(errorMsg);
-    }
-    
-    // Select table pada index 4 (5th table, 0-based indexing)
-    const selectedTable = allTables[4];
-    const tableElement = selectedTable.element;
-    const tableSelector = selectedTable.selector;
-    
-    log(`Selected table index 4 (5th table): ${selectedTable.headerPreview}`, 'info');
-    log(`Table has ${selectedTable.rowCount} rows`, 'info');
-    
-    let allData = [];
-    let headers = [];
-    let pageCount = 0;
 
     try {
-        log('Starting scraping process...');
-
-        // Ambil Header dari elemen tabel yang dipilih
-        let headerRow = tableElement.querySelector('thead > tr:first-child');
-        
-        // Fallback 1: Jika tidak ada thead, cari tr pertama dengan th
-        if (!headerRow) {
-            const allTr = tableElement.querySelectorAll('tr');
-            for (let tr of allTr) {
-                if (tr.querySelector('th')) {
-                    headerRow = tr;
-                    break;
-                }
-            }
-        }
-        
-        if (headerRow) {
-            headers = Array.from(headerRow.querySelectorAll('th'))
-                .map(th => th.innerText.trim())
-                .filter(text => text.length > 0 && text !== 'Silakan Pilih'); // Filter header kosong
-            log(`Headers found: ${headers.length}`, 'success');
-            console.log('Headers extracted:', headers);
-        } else {
-            log('No proper header found, using empty headers...', 'warning');
-            headers = [];
-            log(`Using empty headers`, 'warning');
-        }
-
-        // Looping Halaman (async)
-        while (isRunning && !stopRequested) {
-            pageCount++;
-            log(`Scraping page ${pageCount}...`);
-
-            // EXTRACT page data to temporary variable FIRST
-            const pageData = extractPageData(tableElement, headers);
-            
-            if (pageData.length === 0) {
-                log(`No data found on page ${pageCount}`, 'warning');
-            } else {
-                log(`Found ${pageData.length} rows on page ${pageCount}`, 'info');
-            }
-            
-            // Yield ke event loop agar stop button responsive
-            await sleep(0);
-            
-            // Cek apakah user menekan stop button
-            if (stopRequested) {
-                log('Stop requested, breaking loop', 'warning');
-                break;
+        // Check SPT type
+        if (config.sptType === 'L9') {
+            // L9 Mode: Scrape multiple tables
+            const categories = config.selectedCategories || [];
+            if (categories.length === 0) {
+                throw new Error('No categories selected for L9');
             }
 
-            // Tunggu sampai semua rows terisi sebelum check duplikasi
-            const pageComplete = await waitForPageComplete(
-                tableElement,
-                headers,
-                30000,  // max 30 detik per page
-                500     // cek setiap 500ms
-            );
+            log(`Starting L9 scraping for ${categories.length} categories...`, 'info');
 
-            // Cek apakah user menekan stop button
-            if (stopRequested) {
-                log('Stop requested, breaking loop', 'warning');
-                break;
-            }
+            const categoryDataArray = [];
+            let totalRows = 0;
 
-            // CHECK FOR DUPLICATES BEFORE ADDING TO allData
-            if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
-                log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
-                duplicateRetryCount++;
+            for (const catNum of categories) {
+                if (stopRequested) break;
 
-                if (duplicateRetryCount > MAX_DUPLICATE_RETRY) {
-                    log(`Max retry (${MAX_DUPLICATE_RETRY}) exceeded. Stopping.`, "error");
-                    break;
+                const catInfo = L9_CATEGORY_MAP[catNum];
+                if (!catInfo) {
+                    log(`Unknown category number: ${catNum}`, 'warning');
+                    continue;
                 }
 
-                // Cek apakah ada tombol Next untuk pagination
-                const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
-                const prevPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-prev`;
-                const prevPaginator = document.querySelector(prevPaginatorSelector);
-                const prevPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
-                    ?.querySelector('.p-paginator-prev');
-                const prevButton = prevPaginator || prevPaginatorFallback;
+                log(`Scraping category ${catNum}: ${catInfo.name} (table index ${catInfo.tableIndex})`, 'info');
 
-                if (prevButton && !prevButton.classList.contains("p-disabled")) {
-                    log("Going back to retry...", "info");
-                    prevButton.click();
-                    await sleep(1000);
-                    
-                    const nextPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
-                    const nextPaginator = document.querySelector(nextPaginatorSelector);
-                    const nextPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
-                        ?.querySelector('.p-paginator-next');
-                    const nextButton = nextPaginator || nextPaginatorFallback;
-                    
-                    if (nextButton) {
-                        nextButton.click();
-                        await sleep(1000);
-                        continue;
-                    }
+                const result = scrapeSingleTable(catInfo.tableIndex, allTables);
+                const rowCount = result.data.length;
+                totalRows += rowCount;
+
+                if (rowCount > 0) {
+                    categoryDataArray.push({
+                        categoryName: catInfo.name,
+                        headers: result.headers,
+                        data: result.data
+                    });
+                    log(`Category ${catInfo.name}: ${rowCount} rows`, 'success');
                 } else {
-                    log("Cannot go back. Stopping.", "error");
-                    break;
+                    log(`Category ${catInfo.name}: No data found`, 'warning');
+                }
+
+                // Small delay between categories
+                if (!stopRequested && categories.indexOf(catNum) < categories.length - 1) {
+                    await sleep(config.delay || 500);
                 }
             }
 
-            // NOT A DUPLICATE - Add to allData
-            if (pageData.length > 0) {
-                duplicateRetryCount = 0;
-                lastPageData = pageData;
-                allData = allData.concat(pageData);
-                log(`Current total rows: ${allData.length}`);
+            // Export all L9 data
+            if (!stopRequested && categoryDataArray.length > 0) {
+                log(`Exporting L9 data for ${categoryDataArray.length} categories...`, 'info');
+                if (config.autoExport) {
+                    await exportL9ToExcel(categoryDataArray);
+                }
+                return {
+                    success: true,
+                    sptType: 'L9',
+                    rowCount: totalRows,
+                    pageCount: categoryDataArray.length,
+                    message: `${categoryDataArray.length} categories, ${totalRows} total rows scraped`
+                };
+            } else if (stopRequested) {
+                if (categoryDataArray.length > 0 && config.autoExport) {
+                    await exportL9ToExcel(categoryDataArray);
+                }
+                return {
+                    success: true,
+                    sptType: 'L9',
+                    rowCount: totalRows,
+                    pageCount: categoryDataArray.length,
+                    message: 'Stopped by user. Partial data exported.'
+                };
+            } else {
+                throw new Error('No data found for selected L9 categories');
             }
 
-            // Cek apakah ada tombol Next untuk pagination
-            const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
-            const paginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
-            const paginator = document.querySelector(paginatorSelector);
-            const paginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
-                ?.querySelector('.p-paginator-next');
-            const nextButton = paginator || paginatorFallback;
-
-            if (!nextButton || nextButton.classList.contains('p-disabled')) {
-                log('No more pages or last page reached', 'success');
-                break;
-            }
-
-            nextButton.click();
-            await sleep(1000);
-        }
-
-        // Ekspor ke Excel jika ada data
-        if (!stopRequested && allData.length > 0) {
-            log(`Exporting ${allData.length} rows to Excel...`);
-            if (config.autoExport) {
-                await exportToExcel(headers, allData);
-            }
-            return {
-                success: true,
-                rowCount: allData.length,
-                pageCount: pageCount,
-                message: `Scraped ${allData.length} rows from ${pageCount} pages`
-            };
-        } else if (stopRequested) {
-            log('Scraping stopped by user', 'warning');
-            if (allData.length > 0 && config.autoExport) {
-                await exportToExcel(headers, allData);
-            }
-            return {
-                success: true,
-                rowCount: allData.length,
-                pageCount: pageCount,
-                message: 'Stopped by user. Partial data exported.'
-            };
         } else {
-            log('No data found', 'error');
-            throw new Error('No data found in table');
+            // L3 Mode: Original flow - scrape table index 4 only
+            if (allTables.length < 5) {
+                const errorMsg = `Need at least 5 tables on page, but only found ${allTables.length} table(s).`;
+                log(errorMsg, 'error');
+                throw new Error(errorMsg);
+            }
+
+            log('Starting L3 scraping...', 'info');
+            const result = scrapeSingleTable(4, allTables);
+
+            // Ekspor ke Excel jika ada data
+            if (!stopRequested && result.data.length > 0) {
+                log(`Exporting ${result.data.length} rows to Excel...`);
+                if (config.autoExport) {
+                    await exportToExcel(result.headers, result.data);
+                }
+                return {
+                    success: true,
+                    sptType: 'L3',
+                    rowCount: result.data.length,
+                    pageCount: result.pageCount,
+                    message: `Scraped ${result.data.length} rows from ${result.pageCount} pages`
+                };
+            } else if (stopRequested) {
+                log('Scraping stopped by user', 'warning');
+                if (result.data.length > 0 && config.autoExport) {
+                    await exportToExcel(result.headers, result.data);
+                }
+                return {
+                    success: true,
+                    sptType: 'L3',
+                    rowCount: result.data.length,
+                    pageCount: result.pageCount,
+                    message: 'Stopped by user. Partial data exported.'
+                };
+            } else {
+                log('No data found', 'error');
+                throw new Error('No data found in table');
+            }
         }
 
     } catch (err) {
