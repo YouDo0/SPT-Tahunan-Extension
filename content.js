@@ -788,14 +788,27 @@ async function waitAndExtractPageData(tableElement, headers, maxRetries = 5, ret
                 }
 
                 if (keyColumnsFilled) {
-                    // All key columns filled - wait extra 3000ms for stability
-                    log(`Key columns filled. Waiting 3000ms for data stability...`, 'info');
-                    await sleep(3000);
+                    // Solution 2: Check if key column cell is visually rendered (offsetWidth/Height > 0)
+                    // If not rendered, skip the 3000ms stability wait and let the retry loop handle it
+                    const tbody = tableElement.querySelector('tbody');
+                    const firstRowDOM = tbody?.querySelector('tr');
+                    const keyColIndex = keyColumnIndices[0];
+                    const keyCell = firstRowDOM?.querySelectorAll('td')[keyColIndex];
+                    const isVisuallyRendered = keyCell && keyCell.offsetWidth > 0 && keyCell.offsetHeight > 0;
 
-                    // Re-extract after wait to ensure fresh data
-                    const finalData = extractPageData(tableElement, headers);
-                    log(`Data extracted successfully on attempt ${attempt}/${maxRetries}`, 'success');
-                    return finalData;
+                    if (isVisuallyRendered) {
+                        // All key columns filled AND visually rendered - wait extra 3000ms for stability
+                        log(`Key columns filled and visually rendered. Waiting 3000ms for data stability...`, 'info');
+                        await sleep(3000);
+
+                        // Re-extract after wait to ensure fresh data
+                        const finalData = extractPageData(tableElement, headers);
+                        log(`Data extracted successfully on attempt ${attempt}/${maxRetries}`, 'success');
+                        return finalData;
+                    } else {
+                        // Key column has data in model but NOT visually rendered yet
+                        log(`Attempt ${attempt}/${maxRetries}: Key column has value but NOT visually rendered yet (offsetWidth=${keyCell?.offsetWidth}, offsetHeight=${keyCell?.offsetHeight}), waiting ${retryDelay}ms...`, 'warning');
+                    }
                 }
 
                 log(`Attempt ${attempt}/${maxRetries}: Key column empty (KODE_HARTA=${firstRow[keyColumnIndices[0]]}), waiting ${retryDelay}ms...`, 'warning');
