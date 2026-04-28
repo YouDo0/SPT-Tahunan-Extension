@@ -111,9 +111,14 @@ async function exportToExcel(headers, data, categoryName) {
         ws['!cols'] = wscols;
 
         // Sanitize sheet name (max 31 chars, no special chars)
-        const sheetName = categoryName
-            ? categoryName.substring(0, 25).replace(/[\\/?*\[\]]/g, '_')
-            : "SPT Tahunan Data";
+        // Abbreviate long category prefixes for L9
+        let shortName = categoryName || "SPT Tahunan Data";
+        if (shortName.startsWith("Harta Berwujud")) {
+            shortName = "HB" + shortName.substring(13); // "HB" + rest after "Harta Berwujud"
+        } else if (shortName.startsWith("Harta Tidak Berwujud")) {
+            shortName = "HTB" + shortName.substring(21); // "HTB" + rest after "Harta Tidak Berwujud"
+        }
+        const sheetName = shortName.substring(0, 31).replace(/[\\/?*\[\]]/g, '_');
         XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
         // Generate filename dengan timestamp and category suffix
@@ -167,9 +172,13 @@ async function exportL9ToExcel(categoryDataArray) {
             const wscols = catData.headers.map(() => ({ wch: 25 }));
             ws['!cols'] = wscols;
 
-            const sheetName = catData.categoryName
-                ? catData.categoryName.substring(0, 25).replace(/[\\/?*\[\]]/g, '_')
-                : "Data";
+            const shortName = catData.categoryName || "Data";
+            if (shortName.startsWith("Harta Berwujud")) {
+                shortName = "HB" + shortName.substring(13);
+            } else if (shortName.startsWith("Harta Tidak Berwujud")) {
+                shortName = "HTB" + shortName.substring(21);
+            }
+            const sheetName = shortName.substring(0, 31).replace(/[\\/?*\[\]]/g, '_');
             XLSX.utils.book_append_sheet(wb, ws, sheetName);
         }
 
@@ -830,8 +839,8 @@ function isPageDataDuplicate(currentPageData, previousPageData, headers) {
     // Determine columns to check for duplicate detection based on SPT type
     let checkColumns = [];
     if (config.sptType === 'L9') {
-        // L9: Check KODE HARTA and METODE PENYUSUTAN/AMORTISASI
-        checkColumns = ['KODE HARTA', 'METODE PENYUSUTAN/AMORTISASI'];
+        // L9: Check KETERANGAN column (like L3 uses BUKTI POTONG)
+        checkColumns = ['KETERANGAN'];
     } else {
         // L3: Check BUKTI POTONG/SSP/SSPCP - NOMOR
         checkColumns = ['BUKTI POTONG/SSP/SSPCP - NOMOR'];
@@ -844,10 +853,8 @@ function isPageDataDuplicate(currentPageData, previousPageData, headers) {
     });
 
     // If any column not found, fallback to index-based checking
-    // For L9, use indices 2 (KODE HARTA) and 7 (METODE PENYUSUTAN)
     if (config.sptType === 'L9') {
-        if (columnIndices[0] === -1) columnIndices[0] = 2; // KODE HARTA fallback
-        if (columnIndices[1] === -1) columnIndices[1] = 7; // METODE PENYUSUTAN fallback
+        if (columnIndices[0] === -1) columnIndices[0] = 3; // KETERANGAN fallback
     } else {
         if (columnIndices[0] === -1) columnIndices[0] = 8; // BUKTI POTONG fallback
     }
@@ -977,7 +984,7 @@ async function scrapeSingleTable(tableIndex, allTables) {
         // Yield ke event loop agar stop button responsive
         await sleep(0);
         // Skip duplicate checking for L9 (L9 uses key column validation in waitAndExtractPageData)
-        if (config.sptType !== 'L9' && pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
+        if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
             log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
             duplicateRetryCount++;
 
