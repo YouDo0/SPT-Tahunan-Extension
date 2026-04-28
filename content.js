@@ -739,9 +739,9 @@ function checkPageCompleteness(tbody, headers) {
 async function waitAndExtractPageData(tableElement, headers, maxRetries = 5, retryDelay = 7000) {
     let attempt = 0;
 
-    // Key columns to check for completeness (L9: KODE HARTA, METODE PENYUSUTAN)
+    // Key columns to check for completeness (L9: KODE HARTA only; L3: BUKTI POTONG)
     const keyColumnNames = config.sptType === 'L9'
-        ? ['KODE HARTA', 'METODE PENYUSUTAN/AMORTISASI']
+        ? ['KODE HARTA']
         : ['BUKTI POTONG/SSP/SSPCP - NOMOR'];
 
     // Find indices of key columns in headers
@@ -752,7 +752,6 @@ async function waitAndExtractPageData(tableElement, headers, maxRetries = 5, ret
     // Fallback indices for L9
     if (config.sptType === 'L9') {
         if (keyColumnIndices[0] === -1) keyColumnIndices[0] = 2; // KODE HARTA
-        if (keyColumnIndices[1] === -1) keyColumnIndices[1] = 7; // METODE PENYUSUTAN
     } else {
         if (keyColumnIndices[0] === -1) keyColumnIndices[0] = 8; // BUKTI POTONG
     }
@@ -799,7 +798,7 @@ async function waitAndExtractPageData(tableElement, headers, maxRetries = 5, ret
                     return finalData;
                 }
 
-                log(`Attempt ${attempt}/${maxRetries}: Key columns empty (KODE_HARTA=${firstRow[keyColumnIndices[0]]}, METODE=${firstRow[keyColumnIndices[1]]}), waiting ${retryDelay}ms...`, 'warning');
+                log(`Attempt ${attempt}/${maxRetries}: Key column empty (KODE_HARTA=${firstRow[keyColumnIndices[0]]}), waiting ${retryDelay}ms...`, 'warning');
             } else {
                 log(`Attempt ${attempt}/${maxRetries}: Cells still empty, waiting ${retryDelay}ms...`, 'warning');
             }
@@ -1279,8 +1278,12 @@ async function scrapeSingleTable(tableIndex, allTables) {
 
 /**
  * Scrape a table element directly (used by semantic path finder)
+ * @param {HTMLElement} tableElement - The table element to scrape
+ * @param {Object} options - Optional settings
+ * @param {boolean} options.skipDuplicateCheck - Skip duplicate page detection for this table
  */
-async function scrapeSingleTableFromElement(tableElement) {
+async function scrapeSingleTableFromElement(tableElement, options = {}) {
+    const skipDuplicateCheck = options.skipDuplicateCheck || false;
     if (!tableElement) {
         log('No table element provided', 'error');
         return { headers: [], data: [], pageCount: 0 };
@@ -1365,7 +1368,11 @@ async function scrapeSingleTableFromElement(tableElement) {
 
         // Yield ke event loop agar stop button responsive
         await sleep(0);
-        if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
+
+        // Check for duplicate page (skip if this category doesn't need it)
+        const shouldCheckDuplicate = !skipDuplicateCheck && pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers);
+
+        if (shouldCheckDuplicate) {
             log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
             duplicateRetryCount++;
 
@@ -1511,6 +1518,10 @@ async function startScraping(configData = {}) {
 
                 log(`Scraping category ${catNum}: ${catInfo.name}`, 'info');
 
+                // Categories that skip duplicate page check
+                const skipDuplicateCategories = [5, 6, 7, 12]; // Kelompok Lainnya, Bangunan Permanen/Tidak Permanen, HTB Kelompok Lainnya
+                const skipDuplicateCheck = skipDuplicateCategories.includes(catNum);
+
                 // Get table element using semantic path
                 const tableElement = getTableElementByCategoryL9(catNum);
                 if (!tableElement) {
@@ -1518,7 +1529,7 @@ async function startScraping(configData = {}) {
                     continue;
                 }
 
-                const result = await scrapeSingleTableFromElement(tableElement);
+                const result = await scrapeSingleTableFromElement(tableElement, { skipDuplicateCheck });
                 const rowCount = result.data.length;
                 totalRows += rowCount;
 
