@@ -14,21 +14,206 @@ let config = {
 
 const MAX_DUPLICATE_RETRY = 10;
 
-// L9 Category mapping (1-based index to table index)
+// L9 Category mapping (by accordion + panel semantic path)
 const L9_CATEGORY_MAP = {
-    1: { tableIndex: 8, name: 'Harta Berwujud - Kelompok 1' },
-    2: { tableIndex: 9, name: 'Harta Berwujud - Kelompok 2' },
-    3: { tableIndex: 10, name: 'Harta Berwujud - Kelompok 3' },
-    4: { tableIndex: 11, name: 'Harta Berwujud - Kelompok 4' },
-    5: { tableIndex: 12, name: 'Harta Berwujud - Kelompok Lainnya' },
-    6: { tableIndex: 13, name: 'Bangunan - Permanen' },
-    7: { tableIndex: 14, name: 'Bangunan - Tidak Permanen' },
-    8: { tableIndex: 15, name: 'Harta Tidak Berwujud - Kelompok 1' },
-    9: { tableIndex: 16, name: 'Harta Tidak Berwujud - Kelompok 2' },
-    10: { tableIndex: 17, name: 'Harta Tidak Berwujud - Kelompok 3' },
-    11: { tableIndex: 18, name: 'Harta Tidak Berwujud - Kelompok 4' },
-    12: { tableIndex: 19, name: 'Harta Tidak Berwujud - Kelompok Lainnya' },
+    1: { accordion: 'Harta Berwujud', panel: 'Kelompok 1', name: 'Harta Berwujud - Kelompok 1' },
+    2: { accordion: 'Harta Berwujud', panel: 'Kelompok 2', name: 'Harta Berwujud - Kelompok 2' },
+    3: { accordion: 'Harta Berwujud', panel: 'Kelompok 3', name: 'Harta Berwujud - Kelompok 3' },
+    4: { accordion: 'Harta Berwujud', panel: 'Kelompok 4', name: 'Harta Berwujud - Kelompok 4' },
+    5: { accordion: 'Harta Berwujud', panel: 'Kelompok Lainnya', name: 'Harta Berwujud - Kelompok Lainnya' },
+    6: { accordion: 'Bangunan', panel: 'Permanen', name: 'Bangunan - Permanen' },
+    7: { accordion: 'Bangunan', panel: 'Tidak Permanen', name: 'Bangunan - Tidak Permanen' },
+    8: { accordion: 'Harta Tidak Berwujud', panel: 'Kelompok 1', name: 'Harta Tidak Berwujud - Kelompok 1' },
+    9: { accordion: 'Harta Tidak Berwujud', panel: 'Kelompok 2', name: 'Harta Tidak Berwujud - Kelompok 2' },
+    10: { accordion: 'Harta Tidak Berwujud', panel: 'Kelompok 3', name: 'Harta Tidak Berwujud - Kelompok 3' },
+    11: { accordion: 'Harta Tidak Berwujud', panel: 'Kelompok 4', name: 'Harta Tidak Berwujud - Kelompok 4' },
+    12: { accordion: 'Harta Tidak Berwujud', panel: 'Kelompok Lainnya', name: 'Harta Tidak Berwujud - Kelompok Lainnya' },
 };
+
+// ============================================
+// SEMANTIC DOM FINDER FUNCTIONS (L9/L3)
+// ============================================
+
+/**
+ * Find tabPanel element by its label text (L3 / L9)
+ */
+function findTabPanelByLabel(targetLabel) {
+    log(`Searching for tabPanel with label: "${targetLabel}"`, 'info');
+
+    // Try PrimeNG p-tabPanel
+    let tabPanels = document.querySelectorAll('p-tabPanel, [p-tabpanel], .p-tabpanel, [role="tabpanel"]');
+    log(`Found ${tabPanels.length} potential tabPanels`, 'info');
+
+    for (const panel of tabPanels) {
+        const labelText = panel.innerText || '';
+        const ariaLabel = panel.getAttribute('aria-label') || '';
+        const id = panel.id || '';
+        log(`Checking panel: id="${id}", aria-label="${ariaLabel}", text="${labelText.substring(0, 50)}"`, 'info');
+
+        if (labelText.toLowerCase().includes(targetLabel.toLowerCase()) ||
+            ariaLabel.toLowerCase().includes(targetLabel.toLowerCase()) ||
+            id.toLowerCase().includes(targetLabel.toLowerCase())) {
+            log(`Found matching tabPanel: ${id}`, 'success');
+            return panel;
+        }
+    }
+
+    // Fallback: search by aria-label or data attributes
+    const allElements = document.querySelectorAll('[aria-label*="L3"], [aria-label*="L9"], [data-label*="L3"], [data-label*="L9"], [p-tabpanel]');
+    log(`Fallback search found ${allElements.length} elements with L3/L9 attributes`, 'info');
+    for (const el of allElements) {
+        const label = el.getAttribute('aria-label') || el.getAttribute('data-label') || el.getAttribute('p-tabpanel') || '';
+        if (label.toLowerCase().includes(targetLabel.toLowerCase())) {
+            log(`Found matching element via attribute: ${label}`, 'success');
+            return el;
+        }
+    }
+
+    // Last resort: look for any element containing L3/L9 text
+    const textElements = document.querySelectorAll('[class*="tab"], [class*="panel"]');
+    for (const el of textElements) {
+        const text = el.innerText || '';
+        const className = el.className || '';
+        if ((text.toLowerCase().includes('l9') || text.toLowerCase().includes('l3')) &&
+            (text.toLowerCase().includes(targetLabel.toLowerCase()))) {
+            log(`Found element by text match: ${className}`, 'success');
+            return el;
+        }
+    }
+
+    log(`TabPanel with label "${targetLabel}" not found`, 'warning');
+    return null;
+}
+
+/**
+ * Find accordion element by name within a container
+ */
+function findAccordionInContainer(container, accordionName) {
+    // Look for p-accordion headers with matching text
+    const accordions = container.querySelectorAll('p-accordion, .p-accordion, [p-accordion]');
+    for (const accordion of accordions) {
+        const header = accordion.querySelector('.p-accordion-header, .p-accordion-header-text, [class*="accordion-header"]');
+        if (header && header.innerText.toLowerCase().includes(accordionName.toLowerCase())) {
+            return accordion;
+        }
+    }
+    // Fallback: search in all headers
+    const headers = container.querySelectorAll('[class*="accordion-header"], .p-accordiontab');
+    for (const h of headers) {
+        if (h.innerText.toLowerCase().includes(accordionName.toLowerCase())) {
+            return h.closest('p-accordion, .p-accordion, [p-accordion]') || h.parentElement;
+        }
+    }
+    return null;
+}
+
+/**
+ * Find panel element by name within an accordion
+ */
+function findPanelInAccordion(accordion, panelName) {
+    const panels = accordion.querySelectorAll('p-panel, .p-panel, [p-panel]');
+    for (const panel of panels) {
+        const header = panel.querySelector('.p-panel-header, .p-panel-title, [class*="panel-header"]');
+        if (header && header.innerText.toLowerCase().includes(panelName.toLowerCase())) {
+            return panel;
+        }
+    }
+    return null;
+}
+
+/**
+ * Find table element within a panel's content area
+ */
+function findTableInPanel(panel) {
+    // Tables are usually in the panel content body
+    const content = panel.querySelector('.p-panel-body, .p-panel-content, [class*="panel-body"]');
+    if (content) {
+        const table = content.querySelector('table');
+        if (table) return table;
+    }
+    // Fallback: look for first table in panel
+    return panel.querySelector('table');
+}
+
+/**
+ * Get table element for L9 category using semantic path
+ */
+function getTableElementByCategoryL9(catNum) {
+    const catInfo = L9_CATEGORY_MAP[catNum];
+    if (!catInfo) {
+        log(`Category ${catNum} not found in L9_CATEGORY_MAP`, 'error');
+        return null;
+    }
+
+    // Find L9 tabPanel first
+    const l9TabPanel = findTabPanelByLabel('L9');
+    if (!l9TabPanel) {
+        log('L9 tabPanel not found', 'error');
+        return null;
+    }
+    log(`Found L9 tabPanel`, 'info');
+
+    // Find accordion within L9 tabPanel
+    const accordion = findAccordionInContainer(l9TabPanel, catInfo.accordion);
+    if (!accordion) {
+        log(`Accordion "${catInfo.accordion}" not found`, 'error');
+        return null;
+    }
+    log(`Found accordion "${catInfo.accordion}"`, 'info');
+
+    // Find panel within accordion
+    const panel = findPanelInAccordion(accordion, catInfo.panel);
+    if (!panel) {
+        log(`Panel "${catInfo.panel}" not found in accordion "${catInfo.accordion}"`, 'error');
+        return null;
+    }
+    log(`Found panel "${catInfo.panel}"`, 'info');
+
+    // Find table within panel
+    const table = findTableInPanel(panel);
+    if (!table) {
+        log(`Table not found in panel "${catInfo.panel}"`, 'error');
+        return null;
+    }
+    log(`Found table in panel "${catInfo.panel}"`, 'success');
+
+    return table;
+}
+
+/**
+ * Get table element for L3 using header text matching
+ */
+function getTableElementByCategoryL3() {
+    // Find L3 tabPanel
+    const l3TabPanel = findTabPanelByLabel('L3');
+    if (!l3TabPanel) {
+        log('L3 tabPanel not found', 'error');
+        return null;
+    }
+    log(`Found L3 tabPanel`, 'info');
+
+    // Find all tables in L3 tabPanel
+    const tables = l3TabPanel.querySelectorAll('table');
+    log(`Found ${tables.length} tables in L3 tabPanel`, 'info');
+
+    // Look for table with header containing "PPh" and "dipotong"
+    for (const table of tables) {
+        const headerText = table.innerText || '';
+        if (headerText.toLowerCase().includes('pph') && headerText.toLowerCase().includes('dipotong')) {
+            log(`Found L3 table by header text matching "PPh" and "dipotong"`, 'success');
+            return table;
+        }
+    }
+
+    // Fallback: return first table
+    if (tables.length > 0) {
+        log(`Using first table as fallback for L3`, 'warning');
+        return tables[0];
+    }
+
+    log('No table found in L3 tabPanel', 'error');
+    return null;
+}
 
 // ============================================
 // TABLE DETECTION SYSTEM
@@ -172,7 +357,7 @@ async function exportL9ToExcel(categoryDataArray) {
             const wscols = catData.headers.map(() => ({ wch: 25 }));
             ws['!cols'] = wscols;
 
-            const shortName = catData.categoryName || "Data";
+            let shortName = catData.categoryName || "Data";
             if (shortName.startsWith("Harta Berwujud")) {
                 shortName = "HB" + shortName.substring(13);
             } else if (shortName.startsWith("Harta Tidak Berwujud")) {
@@ -604,9 +789,9 @@ async function waitAndExtractPageData(tableElement, headers, maxRetries = 5, ret
                 }
 
                 if (keyColumnsFilled) {
-                    // All key columns filled - wait extra 1500ms for stability
-                    log(`Key columns filled. Waiting 1500ms for data stability...`, 'info');
-                    await sleep(1500);
+                    // All key columns filled - wait extra 3000ms for stability
+                    log(`Key columns filled. Waiting 3000ms for data stability...`, 'info');
+                    await sleep(3000);
 
                     // Re-extract after wait to ensure fresh data
                     const finalData = extractPageData(tableElement, headers);
@@ -983,7 +1168,6 @@ async function scrapeSingleTable(tableIndex, allTables) {
 
         // Yield ke event loop agar stop button responsive
         await sleep(0);
-        // Skip duplicate checking for L9 (L9 uses key column validation in waitAndExtractPageData)
         if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
             log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
             duplicateRetryCount++;
@@ -1015,7 +1199,49 @@ async function scrapeSingleTable(tableIndex, allTables) {
                 if (nextButton) {
                     nextButton.click();
                     await sleep(1000);
-                    continue;
+
+                    // Re-extract page data after navigation to verify page changed
+                    const newPageData = await waitAndExtractPageData(tableElement, headers, 5, 7000);
+                    log(`Re-check after navigation: ${newPageData.length} rows found`, "info");
+
+                    // Verify the new page is NOT the same as the duplicate we just detected
+                    if (newPageData.length > 0 && !isPageDataDuplicate(newPageData, pageData, headers)) {
+                        // Page changed successfully - proceed with this new page
+                        log(`Page data changed, continuing with this page`, "success");
+                        duplicateRetryCount = 0;
+
+                        // Update lastPageData to compare against next page
+                        // We keep pageData (the NEW current page) as lastPageData
+                        // Don't increment pageCount since we already manually navigated forward
+                        // pageCount stays the same for this iteration, will be pageCount+1 on next loop
+
+                        // Add new page data to allData
+                        allData = allData.concat(newPageData);
+                        log(`Current total rows: ${allData.length}`);
+
+                        // Set lastPageData to newPageData so next iteration compares correctly
+                        lastPageData = newPageData;
+
+                        // Re-fetch next button to check for more pages
+                        const morePagesSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+                        const morePages = document.querySelector(morePagesSelector);
+                        const morePagesFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement?.querySelector('.p-paginator-next');
+                        const morePagesBtn = morePages || morePagesFallback;
+
+                        if (!morePagesBtn || morePagesBtn.classList.contains('p-disabled')) {
+                            log('No more pages or last page reached', 'success');
+                            break;
+                        }
+
+                        // Click Next to advance to next page manually
+                        morePagesBtn.click();
+                        await sleep(1000);
+                        continue;
+                    } else {
+                        // Still same page - retry again
+                        log(`Page still unchanged after navigation, retrying...`, "warning");
+                        continue;
+                    }
                 }
             } else {
                 log("Cannot go back. Stopping.", "error");
@@ -1051,6 +1277,201 @@ async function scrapeSingleTable(tableIndex, allTables) {
     return { headers, data: allData, pageCount };
 }
 
+/**
+ * Scrape a table element directly (used by semantic path finder)
+ */
+async function scrapeSingleTableFromElement(tableElement) {
+    if (!tableElement) {
+        log('No table element provided', 'error');
+        return { headers: [], data: [], pageCount: 0 };
+    }
+
+    log(`Scraping table element directly`, 'info');
+
+    let allData = [];
+    let headers = [];
+    let pageCount = 0;
+    let lastPageData = [];
+    let duplicateRetryCount = 0;
+
+    // Ambil Header dari elemen tabel yang dipilih
+    let headerRow = tableElement.querySelector('thead > tr:first-child');
+
+    // Fallback 1: Jika tidak ada thead, cari tr pertama dengan th
+    if (!headerRow) {
+        const allTr = tableElement.querySelectorAll('tr');
+        for (let tr of allTr) {
+            if (tr.querySelector('th')) {
+                headerRow = tr;
+                break;
+            }
+        }
+    }
+
+    // Get actual cell count from tbody first - this is our source of truth
+    const tbodySample = tableElement.querySelector('tbody tr');
+    const actualCellCount = tbodySample ? tbodySample.querySelectorAll('td').length : 0;
+    log(`Actual data cells per row: ${actualCellCount}`, 'info');
+
+    // Get all th elements from thead
+    const allTh = tableElement.querySelectorAll('thead th');
+    log(`Total th elements in thead: ${allTh.length}`, 'info');
+
+    // Build header mapping using colspan awareness
+    const headerMap = new Array(actualCellCount).fill(null);
+    let currentCellIndex = 0;
+
+    for (let thIndex = 0; thIndex < allTh.length && currentCellIndex < actualCellCount; thIndex++) {
+        const th = allTh[thIndex];
+        const text = th.innerText.trim();
+        const colspan = parseInt(th.getAttribute('colspan')) || 1;
+
+        if (!text || text === 'Silakan Pilih' || text.startsWith('Pilih')) {
+            currentCellIndex += colspan;
+            continue;
+        }
+
+        for (let i = 0; i < colspan && currentCellIndex < actualCellCount; i++) {
+            headerMap[currentCellIndex] = thIndex;
+            currentCellIndex++;
+        }
+    }
+
+    // Extract headers based on mapping
+    for (let i = 0; i < actualCellCount; i++) {
+        if (headerMap[i] !== null && headerMap[i] !== undefined) {
+            const th = allTh[headerMap[i]];
+            headers.push(th.innerText.trim());
+        } else {
+            headers.push(`Column_${i + 1}`);
+        }
+    }
+
+    log(`Headers extracted (colspan-aware): ${headers.length}`, 'success');
+
+    // Looping Halaman (async)
+    while (isRunning && !stopRequested) {
+        pageCount++;
+        log(`Scraping page ${pageCount}...`);
+
+        // Wait for data to load if cells are empty (API call takes time)
+        const pageData = await waitAndExtractPageData(tableElement, headers, 5, 7000);
+
+        if (pageData.length === 0) {
+            log(`No data found on page ${pageCount}`, 'warning');
+        } else {
+            log(`Found ${pageData.length} rows on page ${pageCount}`, 'info');
+        }
+
+        // Yield ke event loop agar stop button responsive
+        await sleep(0);
+        if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
+            log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
+            duplicateRetryCount++;
+
+            if (duplicateRetryCount > MAX_DUPLICATE_RETRY) {
+                log(`Max retry (${MAX_DUPLICATE_RETRY}) exceeded. Stopping.`, "error");
+                break;
+            }
+
+            // Cek apakah ada tombol Next untuk pagination
+            const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
+            const prevPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-prev`;
+            const prevPaginator = document.querySelector(prevPaginatorSelector);
+            const prevPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                ?.querySelector('.p-paginator-prev');
+            const prevButton = prevPaginator || prevPaginatorFallback;
+
+            if (prevButton && !prevButton.classList.contains("p-disabled")) {
+                log("Going back to retry...", "info");
+                prevButton.click();
+                await sleep(1000);
+
+                const nextPaginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+                const nextPaginator = document.querySelector(nextPaginatorSelector);
+                const nextPaginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+                    ?.querySelector('.p-paginator-next');
+                const nextButton = nextPaginator || nextPaginatorFallback;
+
+                if (nextButton) {
+                    nextButton.click();
+                    await sleep(1000);
+
+                    // Re-extract page data after navigation to verify page changed
+                    const newPageData = await waitAndExtractPageData(tableElement, headers, 5, 7000);
+                    log(`Re-check after navigation: ${newPageData.length} rows found`, "info");
+
+                    // Verify the new page is NOT the same as the duplicate we just detected
+                    if (newPageData.length > 0 && !isPageDataDuplicate(newPageData, pageData, headers)) {
+                        log(`Page data changed, continuing with this page`, "success");
+                        duplicateRetryCount = 0;
+
+                        // Set lastPageData to newPageData so next iteration compares correctly
+                        lastPageData = newPageData;
+
+                        // Add new page data to allData
+                        allData = allData.concat(newPageData);
+                        log(`Current total rows: ${allData.length}`);
+
+                        // Re-fetch next button to check for more pages
+                        const morePagesSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+                        const morePages = document.querySelector(morePagesSelector);
+                        const morePagesFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement?.querySelector('.p-paginator-next');
+                        const morePagesBtn = morePages || morePagesFallback;
+
+                        if (!morePagesBtn || morePagesBtn.classList.contains('p-disabled')) {
+                            log('No more pages or last page reached', 'success');
+                            break;
+                        }
+
+                        // Click Next to advance to next page manually
+                        morePagesBtn.click();
+                        await sleep(1000);
+                        continue;
+                    } else {
+                        // Still same page - retry again
+                        log(`Page still unchanged after navigation, retrying...`, "warning");
+                        continue;
+                    }
+                }
+            } else {
+                log("Cannot go back. Stopping.", "error");
+                break;
+            }
+        }
+
+        // NOT A DUPLICATE - Add to allData
+        if (pageData.length > 0) {
+            duplicateRetryCount = 0;
+            lastPageData = pageData;
+            allData = allData.concat(pageData);
+            log(`Current total rows: ${allData.length}`);
+        }
+
+        // Cek apakah ada tombol Next untuk pagination
+        const paginatorId = tableElement.id?.replace('-table', '') || 'pr_id_67';
+        const paginatorSelector = `#${paginatorId} > p-paginator > div > button.p-paginator-next`;
+        const paginator = document.querySelector(paginatorSelector);
+        const paginatorFallback = tableElement.closest('.p-datatable-wrapper, .p-datatable')?.parentElement
+            ?.querySelector('.p-paginator-next');
+        const nextButton = paginator || paginatorFallback;
+
+        if (!nextButton || nextButton.classList.contains('p-disabled')) {
+            log('No more pages or last page reached', 'success');
+            break;
+        }
+
+        nextButton.click();
+        await sleep(1000);
+    }
+
+    return { headers, data: allData, pageCount };
+}
+
+// ============================================
+// START SCRAPING - Main Entry Point
+// ============================================
+
 async function startScraping(configData = {}) {
     // Update config dengan nilai dari popup
     Object.assign(config, configData);
@@ -1061,7 +1482,6 @@ async function startScraping(configData = {}) {
     // Debug struktur table
     debugTableStructure();
 
-    // SIMPLE TABLE SELECTION BY INDEX
     // Scan semua tabel di halaman
     const allTables = analyzeTables();
     log(`Found ${allTables.length} total tables on page`, 'info');
@@ -1089,9 +1509,16 @@ async function startScraping(configData = {}) {
                     continue;
                 }
 
-                log(`Scraping category ${catNum}: ${catInfo.name} (table index ${catInfo.tableIndex})`, 'info');
+                log(`Scraping category ${catNum}: ${catInfo.name}`, 'info');
 
-                const result = await scrapeSingleTable(catInfo.tableIndex, allTables);
+                // Get table element using semantic path
+                const tableElement = getTableElementByCategoryL9(catNum);
+                if (!tableElement) {
+                    log(`Cannot find table for category ${catNum}: ${catInfo.name}`, 'error');
+                    continue;
+                }
+
+                const result = await scrapeSingleTableFromElement(tableElement);
                 const rowCount = result.data.length;
                 totalRows += rowCount;
 
@@ -1141,15 +1568,15 @@ async function startScraping(configData = {}) {
             }
 
         } else {
-            // L3 Mode: Original flow - scrape table index 4 only
-            if (allTables.length < 5) {
-                const errorMsg = `Need at least 5 tables on page, but only found ${allTables.length} table(s).`;
-                log(errorMsg, 'error');
-                throw new Error(errorMsg);
+            // L3 Mode: Find L3 table using semantic path
+            log('Starting L3 scraping...', 'info');
+
+            const l3TableElement = getTableElementByCategoryL3();
+            if (!l3TableElement) {
+                throw new Error('L3 table not found');
             }
 
-            log('Starting L3 scraping...', 'info');
-            const result = scrapeSingleTable(4, allTables);
+            const result = await scrapeSingleTableFromElement(l3TableElement);
 
             // Ekspor ke Excel jika ada data
             if (!stopRequested && result.data.length > 0) {
