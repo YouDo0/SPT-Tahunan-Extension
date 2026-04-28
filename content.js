@@ -355,6 +355,134 @@ function debugTableStructure() {
 }
 
 /**
+ * Extract cell value from a DOM element with multiple fallback strategies.
+ * Handles CORETAX lazy loading patterns including:
+ * - Input/textarea/select values
+ * - PrimeNG hidden inputs
+ * - data-* attributes
+ * - Hidden elements (not filtered by display:none visibility)
+ * - contenteditable elements
+ *
+ * @param {HTMLTableCellElement} td - The table cell element to extract value from
+ * @returns {string} - The extracted cell value, trimmed and normalized
+ */
+function getCellValue(td) {
+    // Priority 1: Check for input/textarea/select elements
+    const input = td.querySelector('input');
+    if (input) {
+        const value = input.value;
+        if (value !== undefined && value !== null && value.trim() !== '') {
+            return value.trim();
+        }
+    }
+
+    const textarea = td.querySelector('textarea');
+    if (textarea) {
+        const value = textarea.value;
+        if (value !== undefined && value !== null && value.trim() !== '') {
+            return value.trim();
+        }
+    }
+
+    const select = td.querySelector('select');
+    if (select) {
+        const selectedOption = select.querySelector('option:checked') || select.options[select.selectedIndex];
+        if (selectedOption) {
+            const value = selectedOption.textContent;
+            if (value !== undefined && value !== null && value.trim() !== '') {
+                return value.trim();
+            }
+        }
+    }
+
+    // Priority 2: Check PrimeNG hidden input patterns
+    const hiddenInput = td.querySelector('input[type="hidden"]');
+    if (hiddenInput) {
+        const value = hiddenInput.value;
+        if (value !== undefined && value !== null && value.trim() !== '') {
+            return value.trim();
+        }
+    }
+
+    // Priority 3: Check data-* attributes
+    const dataAttributes = ['data-value', 'data-content', 'data-display', 'data-id', 'data-raw-value'];
+    for (const attr of dataAttributes) {
+        if (td.hasAttribute(attr)) {
+            const value = td.getAttribute(attr);
+            if (value !== undefined && value !== null && value.trim() !== '') {
+                return value.trim();
+            }
+        }
+
+        const childWithAttr = td.querySelector(`[${attr}]`);
+        if (childWithAttr) {
+            const value = childWithAttr.getAttribute(attr);
+            if (value !== undefined && value !== null && value.trim() !== '') {
+                return value.trim();
+            }
+        }
+    }
+
+    // Priority 4: Check contenteditable elements
+    const contenteditable = td.querySelector('[contenteditable="true"], [contenteditable]');
+    if (contenteditable) {
+        const value = contenteditable.textContent;
+        if (value !== undefined && value !== null && value.trim() !== '') {
+            return value.trim();
+        }
+    }
+
+    // Priority 5: Check PrimeNG-specific elements (ng-reflect-* attributes)
+    const primeElement = td.querySelector('[class*="p-"], [ng-reflect-model], [ng-reflect-value]');
+    if (primeElement) {
+        for (const attr of primeElement.attributes) {
+            if (attr.name.startsWith('ng-reflect-')) {
+                const value = attr.value;
+                if (value !== undefined && value !== null && value.trim() !== '') {
+                    return value.trim();
+                }
+            }
+        }
+
+        if (primeElement.hasAttribute('data-value')) {
+            return primeElement.getAttribute('data-value').trim();
+        }
+    }
+
+    // Priority 6: All child elements including hidden ones
+    const allElements = td.querySelectorAll('span, div, input');
+    for (const el of allElements) {
+        if (el.classList && el.classList.contains('p-column-title')) {
+            continue;
+        }
+
+        if (el.tagName === 'INPUT') {
+            const value = el.value;
+            if (value !== undefined && value !== null && value.trim() !== '') {
+                return value.trim();
+            }
+        } else {
+            const value = el.textContent;
+            if (value !== undefined && value !== null && value.trim() !== '') {
+                return value.trim();
+            }
+        }
+    }
+
+    // Priority 7: Fall back to textContent
+    const clone = td.cloneNode(true);
+    const labelSpan = clone.querySelector('.p-column-title');
+    if (labelSpan) {
+        labelSpan.remove();
+    }
+
+    let textContent = clone.textContent || '';
+    textContent = textContent.trim().replace(/\s+/g, ' ');
+
+    return textContent;
+}
+
+/**
  * Cek apakah row sudah lengkap (semua kolom terisi kecuali TINDAKAN)
  * @param {HTMLTableRowElement} row - Row element yang dicek
  * @param {Array} headers - Array header names
@@ -365,12 +493,14 @@ function isRowComplete(row, headers) {
 
     for (let i = 0; i < cells.length; i++) {
         const headerName = headers[i] || '';
-        const cellText = cells[i].textContent.trim();
 
         // Skip cek untuk kolom TINDAKAN
         if (headerName === 'TINDAKAN') {
             continue;
         }
+
+        // Use robust getCellValue instead of textContent.trim()
+        const cellText = getCellValue(cells[i]);
 
         // Cek apakah kolom kosong (kecuali TINDAKAN)
         if (cellText === '') {
@@ -405,6 +535,100 @@ function checkPageCompleteness(tbody, headers) {
 }
 
 /**
+ * Extract page data with retry if cells are empty (handles API loading delay)
+ * @param {HTMLTableElement} tableElement - Element tabel
+ * @param {Array} headers - Array header names
+ * @param {number} maxRetries - Jumlah retry maksimal (default 5)
+ * @param {number} retryDelay - Delay antar retry dalam ms (default 7000 = 7 detik)
+ * @returns {Promise<Array>} - Array of row data arrays
+ */
+async function waitAndExtractPageData(tableElement, headers, maxRetries = 5, retryDelay = 7000) {
+    let attempt = 0;
+
+    // Key columns to check for completeness (L9: KODE HARTA, METODE PENYUSUTAN)
+    const keyColumnNames = config.sptType === 'L9'
+        ? ['KODE HARTA', 'METODE PENYUSUTAN/AMORTISASI']
+        : ['BUKTI POTONG/SSP/SSPCP - NOMOR'];
+
+    // Find indices of key columns in headers
+    const keyColumnIndices = keyColumnNames.map(name => {
+        const idx = headers ? headers.findIndex(h => h === name) : -1;
+        return idx !== -1 ? idx : -1;
+    });
+    // Fallback indices for L9
+    if (config.sptType === 'L9') {
+        if (keyColumnIndices[0] === -1) keyColumnIndices[0] = 2; // KODE HARTA
+        if (keyColumnIndices[1] === -1) keyColumnIndices[1] = 7; // METODE PENYUSUTAN
+    } else {
+        if (keyColumnIndices[0] === -1) keyColumnIndices[0] = 8; // BUKTI POTONG
+    }
+
+    while (attempt < maxRetries && isRunning && !stopRequested) {
+        attempt++;
+        const pageData = extractPageData(tableElement, headers);
+
+        // Check if we got data
+        if (pageData.length > 0) {
+            const firstRow = pageData[0];
+
+            // First check: any content in cells (excluding TINDAKAN/index 0)
+            let hasGeneralContent = false;
+            for (let i = 1; i < firstRow.length; i++) {
+                if (firstRow[i] && firstRow[i].toString().trim() !== '') {
+                    hasGeneralContent = true;
+                    break;
+                }
+            }
+
+            if (hasGeneralContent) {
+                // Second check: ensure key columns have values
+                let keyColumnsFilled = true;
+                for (const idx of keyColumnIndices) {
+                    if (idx < 0 || idx >= firstRow.length) {
+                        keyColumnsFilled = false;
+                        break;
+                    }
+                    if (!firstRow[idx] || firstRow[idx].toString().trim() === '') {
+                        keyColumnsFilled = false;
+                        break;
+                    }
+                }
+
+                if (keyColumnsFilled) {
+                    // All key columns filled - wait extra 1500ms for stability
+                    log(`Key columns filled. Waiting 1500ms for data stability...`, 'info');
+                    await sleep(1500);
+
+                    // Re-extract after wait to ensure fresh data
+                    const finalData = extractPageData(tableElement, headers);
+                    log(`Data extracted successfully on attempt ${attempt}/${maxRetries}`, 'success');
+                    return finalData;
+                }
+
+                log(`Attempt ${attempt}/${maxRetries}: Key columns empty (KODE_HARTA=${firstRow[keyColumnIndices[0]]}, METODE=${firstRow[keyColumnIndices[1]]}), waiting ${retryDelay}ms...`, 'warning');
+            } else {
+                log(`Attempt ${attempt}/${maxRetries}: Cells still empty, waiting ${retryDelay}ms...`, 'warning');
+            }
+        } else {
+            log(`Attempt ${attempt}/${maxRetries}: No rows found, waiting ${retryDelay}ms...`, 'warning');
+        }
+
+        if (attempt < maxRetries) {
+            await sleep(retryDelay);
+        }
+    }
+
+    // If all retries failed, return whatever we got (even if empty)
+    const finalData = extractPageData(tableElement, headers);
+    if (finalData.length === 0) {
+        log(`Failed to extract data after ${maxRetries} attempts`, 'error');
+    } else {
+        log(`Returning partial data (${finalData.length} rows) after ${maxRetries} failed attempts`, 'warning');
+    }
+    return finalData;
+}
+
+/**
  * Tunggu sampai semua rows di halaman terisi (kecuali kolom TINDAKAN)
  * @param {HTMLTableElement} tableElement - Element tabel
  * @param {Array} headers - Array header names
@@ -412,11 +636,13 @@ function checkPageCompleteness(tbody, headers) {
  * @param {number} checkInterval - Interval cek dalam ms (default 500ms)
  * @returns {Promise<boolean>} - True jika semua row lengkap, false jika timeout
  */
-async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, checkInterval = 500, maxRetries = 10) {
-    const startTime = Date.now();
-    let lastIncompleteCount = -1;
+async function waitForPageComplete(tableElement, headers, maxRetries = 10) {
+    const checkInterval = 500; // Cek setiap 500ms
+    const maxWaitPerCycle = 30000; // 30 detik per cycle sebelum increment retry
+    let startTime = Date.now();
     let retryCount = 0;
-    const retryInterval = 30000; // 30 detik per retry
+    let lastLogTime = 0;
+    const logInterval = 5000; // Log setiap 5 detik
 
     log('Waiting for all rows to be filled (except TINDAKAN column)...', 'info');
 
@@ -431,19 +657,17 @@ async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, c
 
         if (!tbody) {
             log('No tbody found while waiting for completion', 'warning');
-            // Tunggu 30 detik sebelum retry
-            await sleep(retryInterval);
-            retryCount++;
-            log(`Retry ${retryCount}/${maxRetries} - waiting 30s for tbody to appear...`, 'info');
+            await sleep(checkInterval);
             continue;
         }
 
         const completeness = checkPageCompleteness(tbody, headers);
 
-        // Log progress hanya jika ada perubahan
-        if (completeness.incompleteRows !== lastIncompleteCount) {
+        // Log progress secara periodik
+        const now = Date.now();
+        if (now - lastLogTime >= logInterval) {
             log(`Row completion: ${completeness.totalRows - completeness.incompleteRows}/${completeness.totalRows} rows complete (${completeness.incompleteRows} remaining)`, 'info');
-            lastIncompleteCount = completeness.incompleteRows;
+            lastLogTime = now;
         }
 
         // Cek jika sudah lengkap
@@ -452,18 +676,12 @@ async function waitForPageComplete(tableElement, headers, maxWaitTime = 30000, c
             return true;
         }
 
-        // Cek timeout per cycle
+        // Cek elapsed time untuk increment retry
         const elapsed = Date.now() - startTime;
-        if (elapsed >= retryInterval) {
-            // Reset timer dan increment retry
+        if (elapsed >= maxWaitPerCycle) {
             startTime = Date.now();
             retryCount++;
             log(`Retry ${retryCount}/${maxRetries} - waiting 30s for data to load...`, 'info');
-
-            if (retryCount >= maxRetries) {
-                log(`Max retry count (${maxRetries} x 30s = ${maxRetries * 30}s) exceeded. Data never loaded.`, 'error');
-                throw new Error(`Data tidak muncul setelah menunggu ${maxRetries * 30} detik. Kemungkinan halaman tidak memuat data dengan benar.`);
-            }
         }
 
         // Cek stop requested
@@ -501,12 +719,18 @@ function extractBuktiPotongValues(tableElement, headers) {
     rows.forEach(row => {
         const cells = row.querySelectorAll("td");
         if (cells[columnIndex]) {
-            const clone = cells[columnIndex].cloneNode(true);
-            const labelSpan = clone.querySelector(".p-column-title");
-            if (labelSpan) {
-                labelSpan.remove();
+            // Use robust getCellValue with clone fallback
+            let value = getCellValue(cells[columnIndex]);
+
+            if (value === '') {
+                const clone = cells[columnIndex].cloneNode(true);
+                const labelSpan = clone.querySelector(".p-column-title");
+                if (labelSpan) {
+                    labelSpan.remove();
+                }
+                value = clone.textContent.trim().replace(/\s+/g, " ");
             }
-            const value = clone.textContent.trim().replace(/\s+/g, " ");
+
             values.push(value);
         }
     });
@@ -548,23 +772,29 @@ function isDuplicatePage(currentPageValues, previousPageValues) {
 function extractPageData(tableElement, headers) {
     const pageData = [];
     const tbody = tableElement.querySelector('tbody');
-    
+
     if (!tbody) return pageData;
-    
+
     const rows = tbody.querySelectorAll('tr');
-    
+
     rows.forEach(row => {
         const rowData = [];
         const cells = row.querySelectorAll('td');
 
         cells.forEach((td, index) => {
-            const clone = td.cloneNode(true);
-            const labelSpan = clone.querySelector('.p-column-title');
-            if (labelSpan) {
-                labelSpan.remove();
+            // Use robust getCellValue with clone fallback
+            let cellText = getCellValue(td);
+
+            // If getCellValue returned empty, try clone method as fallback
+            if (cellText === '') {
+                const clone = td.cloneNode(true);
+                const labelSpan = clone.querySelector('.p-column-title');
+                if (labelSpan) {
+                    labelSpan.remove();
+                }
+                cellText = clone.textContent.trim().replace(/\s+/g, ' ');
             }
 
-            let cellText = clone.textContent.trim().replace(/\s+/g, ' ');
             const headerName = headers[index] || '';
             if (isCurrencyColumn(headerName)) {
                 cellText = parseCurrency(cellText);
@@ -597,34 +827,52 @@ function isPageDataDuplicate(currentPageData, previousPageData, headers) {
         return false;
     }
 
-    // Determine duplicate check column based on SPT type
-    // L3 uses "BUKTI POTONG/SSP/SSPCP - NOMOR", L9 uses "KETERANGAN"
-    let columnName;
+    // Determine columns to check for duplicate detection based on SPT type
+    let checkColumns = [];
     if (config.sptType === 'L9') {
-        columnName = "KETERANGAN";
+        // L9: Check KODE HARTA and METODE PENYUSUTAN/AMORTISASI
+        checkColumns = ['KODE HARTA', 'METODE PENYUSUTAN/AMORTISASI'];
     } else {
-        columnName = "BUKTI POTONG/SSP/SSPCP - NOMOR";
+        // L3: Check BUKTI POTONG/SSP/SSPCP - NOMOR
+        checkColumns = ['BUKTI POTONG/SSP/SSPCP - NOMOR'];
     }
 
-    // Find index of the appropriate column
-    const columnIndex = headers ? headers.findIndex(h => h === columnName) : -1;
-    const checkIndex = columnIndex !== -1 ? columnIndex : 8; // Fallback to index 8
+    // Find indices of the columns
+    const columnIndices = checkColumns.map(colName => {
+        const idx = headers ? headers.findIndex(h => h === colName) : -1;
+        return idx !== -1 ? idx : -1;
+    });
 
-    // Compare only the specific column
+    // If any column not found, fallback to index-based checking
+    // For L9, use indices 2 (KODE HARTA) and 7 (METODE PENYUSUTAN)
+    if (config.sptType === 'L9') {
+        if (columnIndices[0] === -1) columnIndices[0] = 2; // KODE HARTA fallback
+        if (columnIndices[1] === -1) columnIndices[1] = 7; // METODE PENYUSUTAN fallback
+    } else {
+        if (columnIndices[0] === -1) columnIndices[0] = 8; // BUKTI POTONG fallback
+    }
+
+    // Compare only the specific columns
     for (let i = 0; i < currentPageData.length; i++) {
         const currentRow = currentPageData[i];
         const previousRow = previousPageData[i];
 
-        if (!currentRow[checkIndex] || !previousRow[checkIndex]) {
-            return false;
-        }
+        for (const checkIndex of columnIndices) {
+            if (checkIndex < 0 || checkIndex >= currentRow.length || checkIndex >= previousRow.length) {
+                continue;
+            }
 
-        if (currentRow[checkIndex] !== previousRow[checkIndex]) {
-            return false;
+            if (!currentRow[checkIndex] || !previousRow[checkIndex]) {
+                return false;
+            }
+
+            if (currentRow[checkIndex] !== previousRow[checkIndex]) {
+                return false;
+            }
         }
     }
 
-    return true; // All values in the key column match - is a duplicate
+    return true; // All values in the key columns match - is a duplicate
 }
 
 // --- 3. CORE SCRAPING LOGIC ---
@@ -664,24 +912,61 @@ async function scrapeSingleTable(tableIndex, allTables) {
         }
     }
 
-    if (headerRow) {
-        headers = Array.from(headerRow.querySelectorAll('th'))
-            .map(th => th.innerText.trim())
-            .filter(text => text.length > 0 && text !== 'Silakan Pilih');
-        log(`Headers found: ${headers.length}`, 'success');
-        console.log('Headers extracted:', headers);
-    } else {
-        log('No proper header found, using empty headers...', 'warning');
-        headers = [];
+    // Get actual cell count from tbody first - this is our source of truth
+    const tbodySample = tableElement.querySelector('tbody tr');
+    const actualCellCount = tbodySample ? tbodySample.querySelectorAll('td').length : 0;
+    log(`Actual data cells per row: ${actualCellCount}`, 'info');
+
+    // Get all th elements from thead
+    const allTh = tableElement.querySelectorAll('thead th');
+    log(`Total th elements in thead: ${allTh.length}`, 'info');
+
+    // Build header mapping using colspan awareness
+    // Map each cell index to its corresponding header
+    const headerMap = new Array(actualCellCount).fill(null);
+    let currentCellIndex = 0;
+
+    for (let thIndex = 0; thIndex < allTh.length && currentCellIndex < actualCellCount; thIndex++) {
+        const th = allTh[thIndex];
+        const text = th.innerText.trim();
+        const colspan = parseInt(th.getAttribute('colspan')) || 1;
+
+        // Skip dropdown placeholders and empty headers
+        if (!text || text === 'Silakan Pilih' || text.startsWith('Pilih')) {
+            // This header doesn't represent actual data columns
+            currentCellIndex += colspan;
+            continue;
+        }
+
+        // This is a valid header - map it to cell positions
+        for (let i = 0; i < colspan && currentCellIndex < actualCellCount; i++) {
+            headerMap[currentCellIndex] = thIndex;
+            currentCellIndex++;
+        }
     }
+
+    // Extract headers based on mapping
+    headers = [];
+    for (let i = 0; i < actualCellCount; i++) {
+        if (headerMap[i] !== null && headerMap[i] !== undefined) {
+            const th = allTh[headerMap[i]];
+            headers.push(th.innerText.trim());
+        } else {
+            // No header found for this cell index - use placeholder
+            headers.push(`Column_${i + 1}`);
+        }
+    }
+
+    log(`Headers extracted (colspan-aware): ${headers.length}`, 'success');
+    console.log('Headers:', headers);
 
     // Looping Halaman (async)
     while (isRunning && !stopRequested) {
         pageCount++;
         log(`Scraping page ${pageCount}...`);
 
-        // EXTRACT page data to temporary variable FIRST
-        const pageData = extractPageData(tableElement, headers);
+        // Wait for data to load if cells are empty (API call takes time)
+        const pageData = await waitAndExtractPageData(tableElement, headers, 5, 7000);
 
         if (pageData.length === 0) {
             log(`No data found on page ${pageCount}`, 'warning');
@@ -691,30 +976,8 @@ async function scrapeSingleTable(tableIndex, allTables) {
 
         // Yield ke event loop agar stop button responsive
         await sleep(0);
-
-        // Cek apakah user menekan stop button
-        if (stopRequested) {
-            log('Stop requested, breaking loop', 'warning');
-            break;
-        }
-
-        // Tunggu sampai semua rows terisi sebelum check duplikasi
-        const pageComplete = await waitForPageComplete(
-            tableElement,
-            headers,
-            30000,
-            500,
-            10
-        );
-
-        // Cek apakah user menekan stop button
-        if (stopRequested) {
-            log('Stop requested, breaking loop', 'warning');
-            break;
-        }
-
-        // CHECK FOR DUPLICATES BEFORE ADDING TO allData
-        if (pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
+        // Skip duplicate checking for L9 (L9 uses key column validation in waitAndExtractPageData)
+        if (config.sptType !== 'L9' && pageData.length > 0 && lastPageData.length > 0 && isPageDataDuplicate(pageData, lastPageData, headers)) {
             log(`Duplicate page detected! Page ${pageCount} matches page ${pageCount - 1}`, "warning");
             duplicateRetryCount++;
 
