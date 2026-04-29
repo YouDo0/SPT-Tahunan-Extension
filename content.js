@@ -490,7 +490,10 @@ function parseCurrency(value) {
 function isCurrencyColumn(headerName) {
     const currencyColumns = [
         'DASAR PENGENAAN PAJAK (Rupiah)',
-        'PPH YANG DIPOTONG/DIPUNGUT (Rupiah)'
+        'PPH YANG DIPOTONG/DIPUNGUT (Rupiah)',
+        'BIAYA PEROLEHAN (Rp)',
+        'NILAI SISA BUKU FISKAL PADA AWAL TAHUN (Rp)',
+        'PENYUSUTAN/AMORTISASI FISKAL TAHUN INI (Rp)'
     ];
     return currencyColumns.includes(headerName);
 }

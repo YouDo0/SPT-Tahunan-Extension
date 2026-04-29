@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "SPT Tahunan Scraper",
+  "name": "SPT Tahunan Scraper - L9",
   "version": "1.5",
-  "description": "Scraping tabel di section SPT Tahunan secara otomatis di dalam CORETAX. Last Update : Add L3/L9 functionality, Last Update : 27-04-26",
+  "description": "Scraping tabel di section SPT Tahunan secara otomatis di dalam CORETAX. Last Update : Add L3/L9 functionality, Last Update : 29-04-26",
   "permissions": [
     "activeTab",
     "scripting",
